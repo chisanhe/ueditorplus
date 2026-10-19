@@ -14,6 +14,7 @@ namespace Chisanhe\Ueditorplus\Form;
 
 use Dcat\Admin\Admin;
 use Dcat\Admin\Form\Field;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Str;
 
 /**
@@ -41,15 +42,18 @@ class UeditorPlusField extends Field
         // 是否自动获取焦点
         'focus' => false,
         // 是否启用自动保存
-        'enableAutoSave' => true,
+        'autoSaveEnable' => false,
     ];
 
     /**
      * 视图模板路径
-     * 
+     *
+     * 命名空间必须与 ServiceProvider::loadViewsFrom 注册的命名空间保持一致，
+     * 否则会报 "No hint path defined for [...]"。
+     *
      * @var string
      */
-    protected $view = 'ueditorplus::ueditor';
+    protected $view = 'chisanhe.ueditorplus::ueditor';
 
     /**
      * 当前使用的磁盘存储配置
@@ -100,12 +104,15 @@ class UeditorPlusField extends Field
     }
 
     /**
-     * 设置编辑器宽度
-     * 
+     * 设置编辑器宽度（像素）
+     *
+     * 注意：父类 Dcat\Admin\Form\Field::width($field, $label) 用于设置 Bootstrap 网格布局，
+     * 不要覆盖它。设置编辑器像素宽度请使用本方法。
+     *
      * @param int $width 编辑器宽度（像素）
      * @return $this
      */
-    public function width($width)
+    public function editorWidth($width)
     {
         $this->options['initialFrameWidth'] = (int) $width;
 
@@ -164,6 +171,7 @@ class UeditorPlusField extends Field
      */
     public function enableAutoSave()
     {
+        $this->options['autoSaveEnable']  = true;
         $this->options['enableAutoSave'] = true;
 
         return $this;
@@ -171,19 +179,46 @@ class UeditorPlusField extends Field
 
     /**
      * 禁用自动保存
-     * 
+     *
      * @return $this
      */
     public function disableAutoSave()
     {
+        $this->options['autoSaveEnable']  = false;
         $this->options['enableAutoSave'] = false;
 
         return $this;
     }
 
     /**
+     * 启用远程图片自动抓取
+     *
+     * 粘贴内容时自动检测并下载外部图片到本地
+     *
+     * @return $this
+     */
+    public function enableRemoteImageFetch()
+    {
+        $this->options['remoteImageEnable'] = true;
+
+        return $this;
+    }
+
+    /**
+     * 禁用远程图片自动抓取
+     *
+     * @return $this
+     */
+    public function disableRemoteImageFetch()
+    {
+        $this->options['remoteImageEnable'] = false;
+
+        return $this;
+    }
+
+    /**
      * 启用 135 编辑器
-     * 
+     *
      * 135 编辑器是一款强大的在线排版编辑器
      * 
      * @param array $config 135编辑器配置
@@ -374,58 +409,143 @@ class UeditorPlusField extends Field
         // 格式化配置
         $opts = $this->formatOptions();
 
-        // 获取资源路径
-        $assetPath = Admin::asset()->package('chisanhe/ueditorplus');
-
         // 获取 CSRF 令牌
         $csrfToken = csrf_token();
 
-        // 生成初始化脚本
+        // 提前设置 serverUrl，避免 UEditor 在 serverUrl 为空时用当前页面 URL
+        $serverUrl = $this->options['serverUrl'] ?? '';
+        $disk = $this->disk;
+
+        // 是否启用远程图片自动抓取（从配置文件读取）
+        $remoteImageEnable = Arr::get(config('ueditorplus', []), 'catchRemoteImageEnable', true)
+            && ($this->options['remoteImageEnable'] ?? true);
+
+        // 关键修复：通过 json_encode 直接将原始 HTML 传给 JS 变量，
+        // 绕过 hidden input HTML 属性的 < 字符编码问题（浏览器会自动将属性中的 < 编码为 &lt;）
+        $contentJson = json_encode((string) $this->value(), JSON_UNESCAPED_UNICODE);
+
+        // 将 PHP 值转为 JS 字面量（供 heredoc 直接插入，避免 {表达式} 语法冲突）
+        $remoteImageEnableJS = $remoteImageEnable ? 'true' : 'false';
+        $serverUrlJS = json_encode($serverUrl);
+
+        // 生成初始化脚本（heredoc 直接赋值，所有 PHP 变量用拼接注入）
         $this->script = <<<JS
 (function () {
-    // 获取已存储的内容
-    var storedValue = $('#{$id}-value').val();
-    
-    // 检查是否已存在编辑器实例
-    if (UE.getEditor('{$id}')) {
-        UE.getEditor('{$id}').destroy();
+    var storedValue = {$contentJson};
+    var remoteImageEnable = {$remoteImageEnableJS};
+    if (typeof UEEDITOR_CONFIG !== 'undefined') {
+        UEEDITOR_CONFIG.serverUrl = {$serverUrlJS};
     }
-    
-    // 创建新的编辑器实例
+    var fetchTimer_{$id} = null;
+    function showToast(message, type) {
+        type = type || 'success';
+        if (typeof Dcat !== 'undefined' && Dcat.notify) {
+            if (type === 'success') { Dcat.notify.success(message); }
+            else if (type === 'error') { Dcat.notify.error(message); }
+            else { Dcat.notify(message); }
+            return;
+        }
+        if (typeof toastr !== 'undefined') {
+            if (type === 'success') { toastr.success(message); }
+            else if (type === 'error') { toastr.error(message); }
+            else { toastr.info(message); }
+            return;
+        }
+        if (type !== 'success') { alert(message); }
+    }
+    function showProgress() {
+        if (typeof Dcat !== 'undefined' && Dcat.NP && Dcat.NP.start) { Dcat.NP.start(); }
+    }
+    function hideProgress() {
+        if (typeof Dcat !== 'undefined' && Dcat.NP && Dcat.NP.done) { Dcat.NP.done(); }
+    }
+    function fetchAndReplaceRemoteImages(editor, action) {
+        var body = editor.body || editor.document.body;
+        if (!body) return;
+        var seen = {};
+        var remoteSrcs = [];
+        var imgs = body.querySelectorAll('img');
+        for (var i = 0; i < imgs.length; i++) {
+            var src = imgs[i].src || imgs[i].getAttribute('src') || '';
+            if (src && src.indexOf('http') === 0 && src.indexOf(window.location.host) === -1 && !seen[src]) {
+                seen[src] = true;
+                remoteSrcs.push({ el: imgs[i], src: src });
+            }
+        }
+        if (remoteSrcs.length === 0) return;
+        var total = remoteSrcs.length;
+        var fetched = 0;
+        var failed = 0;
+        var serverUrl = editor.getOpt('serverUrl') || '';
+        if (!serverUrl) return;
+        showToast('\u68c0\u6d4b\u5230 ' + total + ' \u5f20\u5916\u90e8\u56fe\u7247\u6b63\u5728\u62d3\u53d6\u672c\u5730\u5316...', 'info');
+        showProgress();
+        var tokenInput = document.querySelector('input[name=_token]');
+        var csrfToken = tokenInput ? tokenInput.value : '';
+        var disk = 'public';
+        try { disk = editor.execCommand('serverparam', 'disk') || 'public'; } catch (e) {}
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', serverUrl + '?action=catchimage&disk=' + encodeURIComponent(disk), true);
+        xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+        if (csrfToken) { xhr.setRequestHeader('X-CSRF-TOKEN', csrfToken); }
+        var fd = new FormData();
+        for (var j = 0; j < remoteSrcs.length; j++) {
+            fd.append('source[]', remoteSrcs[j].src);
+        }
+        xhr.onload = function () {
+            hideProgress();
+            if (xhr.status === 200) {
+                try {
+                    var res = JSON.parse(xhr.responseText);
+                    if (res.state === 'SUCCESS' && res.list && res.list.length) {
+                        for (var k = 0; k < res.list.length; k++) {
+                            var item = res.list[k];
+                            if (item.state === 'SUCCESS' && item.url && item.source) {
+                                for (var m = 0; m < remoteSrcs.length; m++) {
+                                    if (remoteSrcs[m].src === item.source) {
+                                        remoteSrcs[m].el.src = item.url;
+                                        fetched++;
+                                        break;
+                                    }
+                                }
+                            } else { failed++; }
+                        }
+                    } else { failed = total; }
+                } catch (e) { failed = total; }
+            } else { failed = total; }
+            if (fetched === total) { showToast('\u8fdc\u7a0b\u56fe\u7247\u62d3\u53d6\u5b8c\u6210\u5171 ' + total + ' \u5f20', 'success'); }
+            else if (fetched > 0) { showToast('\u8fdc\u7a0b\u56fe\u7247\u62d3\u53d6\u5b8c\u6210\uff1a' + fetched + ' \u5f20\u6210\u529f\uff0c' + failed + ' \u5f20\u5931\u8d25', 'error'); }
+            else { showToast('\u8fdc\u7a0b\u56fe\u7247\u62d3\u53d6\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u670d\u52a1\u5668\u914d\u7f6e', 'error'); }
+        };
+        xhr.onerror = function () {
+            hideProgress();
+            showToast('\u8fdc\u7a0b\u56fe\u7247\u62d3\u53d6\u8bf7\u6c42\u5931\u8d25', 'error');
+        };
+        xhr.send(fd);
+    }
+    var oldEditor = UE.getEditor('{$id}');
+    if (oldEditor && oldEditor.parentNode) { oldEditor.destroy(); }
     var ue = UE.getEditor('{$id}', {$opts});
-    
-    // 编辑器准备就绪后
     ue.ready(function() {
-        // 设置初始内容
         if (storedValue) {
             ue.setContent(storedValue);
+            jQuery('#{$id}-value').val(storedValue);
+            // 初始内容加载后立即检查并抓取远程图片
+            if (remoteImageEnable) {
+                fetchAndReplaceRemoteImages(ue, 'init');
+            }
         }
-        
-        // 设置 CSRF 令牌
         ue.execCommand('serverparam', '_token', '{$csrfToken}');
-        
-        // 设置磁盘配置
-        ue.execCommand('serverparam', 'disk', '{$this->disk}');
-        
-        // 初始化 135 编辑器
-        if (ue.ui && ue.ui.isEditor135Enabled && ue.ui.isEditor135Enabled()) {
-            ue.ui.init135Editor();
-        }
-        
-        // 初始化秀米编辑器
-        if (ue.ui && ue.ui.isXiumiEnabled && ue.ui.isXiumiEnabled()) {
-            ue.ui.initXiumi();
-        }
-    });
-    
-    // 监听内容变化，同步到隐藏字段
-    ue.addListener('contentChange', function() {
-        $('#{$id}-value').val(ue.getContent());
-    });
-    
-    // 表单提交前同步内容
-    ue.addListener('blur', function() {
-        $('#{$id}-value').val(ue.getContent());
+        ue.execCommand('serverparam', 'disk', '{$disk}');
+        ue.addListener('contentChange', function() {
+            jQuery('#{$id}-value').val(ue.getContent());
+            if (!remoteImageEnable) return;
+            clearTimeout(fetchTimer_{$id});
+            fetchTimer_{$id} = setTimeout(function() { fetchAndReplaceRemoteImages(ue, 'paste'); }, 1000);
+        });
+        ue.addListener('blur', function() {
+            jQuery('#{$id}-value').val(ue.getContent());
+        });
     });
 })();
 JS;
@@ -438,7 +558,7 @@ JS;
      */
     protected function generateId()
     {
-        return 'ueditorplus-' . Str::random(8);
+        return 'ueditorplus_' . Str::random(8);
     }
 
     /**
@@ -452,32 +572,52 @@ JS;
     {
         return array_merge(parent::variables(), [
             // 资源文件基础路径
-            'homeUrl' => admin_asset('@chisanhe/ueditorplus') . '/',
+            'homeUrl' => admin_asset('vendor/chisanhe/ueditorplus') . '/',
+            // 内容用于 data 属性（htmlspecialchars + ENT_QUOTES 避免 HTML 解析问题）
+            'contentDataAttr' => htmlspecialchars(
+                json_encode((string) $this->value(), JSON_UNESCAPED_UNICODE),
+                ENT_QUOTES,
+                'UTF-8'
+            ),
         ]);
     }
 
     /**
      * 渲染表单字段
-     * 
+     *
      * @return string
      */
     public function render()
     {
-        // 加载必要的 CSS 和 JS 资源
-        Admin::requireAssets([
-            '@chisanhe.ueditorplus' => [
-                // ueditorplus 核心文件
-                'ueditor.config.js',
-                'ueditor.all.js',
-                'ueditor.parse.js',
-            ],
+        // 资源路径
+        $base = admin_asset('vendor/chisanhe/ueditorplus');
+
+        // 设置 UEDITOR_HOME_URL（direct 同步执行，优先于所有 JS 文件）
+        Admin::script("window.UEDITOR_HOME_URL = '$base/';", true);
+
+        // 加载 ueditor 三件套
+        Admin::js([
+            $base . '/ueditor.config.js',
+            $base . '/ueditor.all.js',
+            $base . '/ueditor.parse.js',
         ]);
+
+        // 加载 ueditor 插件（135编辑器、秀米等必须在 ueditor.all.js 之后加载）
+        Admin::js([
+            $base . '/plugins/demo/demo.js',
+        ]);
+
+        // 135编辑器按钮和秀米按钮的图标样式
+        Admin::style(".edui-button.edui-for-135editor .edui-button-wrap .edui-button-body .edui-icon{background-image:url(https://static.135editor.com/img/icons/editor-135-icon.png)!important;background-size:85%;background-position:center;background-repeat:no-repeat}.edui-button.edui-for-xiumi-connect .edui-button-wrap .edui-button-body .edui-icon{background-image:url({$base}/themes/default/images/xiumi-connect-icon.png)!important;background-size:contain}");
 
         // 设置磁盘配置
         $this->setDisk();
 
         // 设置脚本
         $this->setupScript();
+
+        // 强制使用内置视图模板（视图名格式：namespace::view，namespace = $this->getName() = 'chisanhe.ueditorplus'）
+        $this->view = 'chisanhe.ueditorplus::ueditor';
 
         // 调用父类渲染方法
         return parent::render();

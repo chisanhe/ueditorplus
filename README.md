@@ -19,16 +19,10 @@ composer require chisanhe/ueditorplus
 
 ## 配置
 
-### 1. 发布资源文件
+### 1. 发布资源文件和配置文件
 
 ```bash
-php artisan vendor:publish --provider="Chisanhe\Ueditorplus\ChisanheUeditorplusServiceProvider" --tag=chisanhe-ueditorplus-assets
-```
-
-### 2. 发布配置文件
-
-```bash
-php artisan vendor:publish --provider="Chisanhe\Ueditorplus\ChisanheUeditorplusServiceProvider" --tag=chisanhe-ueditorplus-config
+php artisan vendor:publish --provider="Chisanhe\Ueditorplus\ChisanheUeditorplusServiceProvider"
 ```
 
 ### 3. 配置说明
@@ -145,6 +139,38 @@ $form->ueditorplus('content', '内容')
         'apiUrl' => 'https://xiumi.us/api/',
     ]);
 ```
+
+### 远程图片自动抓取
+
+编辑器会自动检测正文中的外部图片链接，并在内容变化（如粘贴）时自动将图片下载到本地服务器，替换为本地路径，确保文章在任何环境下都能正常显示。
+
+**功能特点：**
+
+- 粘贴外部图片链接后 **1 秒内**自动触发抓取
+- 同时支持从 **135 编辑器** 粘贴内容时自动抓取
+- 抓取完成后显示成功/失败提示
+- 自动去重，避免同一图片重复抓取
+- 兼容 Dcat Admin 提示组件（`Dcat.notify`）和 `toastr`
+
+**使用方式：** 无需额外配置，默认已启用。
+
+**关闭自动抓取：** 配置文件全局关闭：
+
+```php
+// config/ueditorplus.php
+'catchRemoteImageEnable' => false,
+```
+
+或对单个字段关闭：
+
+```php
+$form->ueditorplus('content', '内容')
+    ->disableRemoteImageFetch();
+```
+
+**手动抓取：** 点击编辑器工具栏中的「远程图片」按钮（由 UEditor 内置提供），可手动选择并抓取页面中的远程图片。
+
+> **提示：** 抓图接口地址为 `/admin/ueditor?action=catchimage`，确保该接口在 `routes.php` 中已注册且服务器可正常请求外部图片 URL。`.env` 中 `APP_URL` 必须填写正确的网站地址，否则图片可能下载失败。
 
 ### 同时启用多个编辑器
 
@@ -288,25 +314,3 @@ $this->app->bind(StorageInterface::class, OssStorage::class);
 - 确保已启用对应的编辑器功能
 - 检查配置中的 API 地址和 Key 是否正确
 - 查看浏览器控制台是否有错误信息
-
-## 发布到 Packagist
-
-1. 创建 GitHub 仓库并推送代码
-2. 在 [Packagist](https://packagist.org) 注册账号
-3. 点击 "Submit Package" 按钮
-4. 输入仓库地址：`https://github.com/yourname/ueditorplus`
-5. 点击 "Check" 验证
-6. 点击 "Submit" 完成提交
-
-### 设置自动更新
-
-在 GitHub 仓库的 Settings > Webhooks 中添加 Packagist webhook：
-
-- Payload URL: `https://packagist.org/api/github/`
-- Events: Push
-
-同时在 Packagist 的 Package 页面点击 "GitHub incoming webhook" 进行配置。
-
-## License
-
-MIT License

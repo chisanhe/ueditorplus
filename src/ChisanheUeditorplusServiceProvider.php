@@ -26,17 +26,43 @@ class ChisanheUeditorplusServiceProvider extends BaseServiceProvider
 {
     /**
      * 扩展包名称
-     * 
+     *
      * @const string
      */
     const NAME = 'ueditorplus';
 
     /**
-     * 扩展包版本
-     * 
-     * @const string
+     * 扩展包标识 (用于 Dcat Admin 扩展系统)
+     * 格式：vendor.package (用点分隔)
+     *
+     * @var string
      */
-    const VERSION = '1.0.0';
+    protected $name = 'chisanhe.ueditorplus';
+
+    /**
+     * {@inheritdoc}
+     *
+     * 覆盖父类方法，让本地开发模式下扩展始终视为启用。
+     * 父类会检查 Admin::extension()->enabled()，需要扩展在 Dcat Admin 扩展管理中注册才返回 true。
+     * 这里直接返回 true，确保 init() 流程能执行（包括 publishable 注册资源）。
+     *
+     * @return bool
+     */
+    public function enabled()
+    {
+        return true;
+    }
+
+    /**
+     * JS 文件
+     * 
+     * @var array
+     */
+    protected $js = [
+        'ueditor.config.js',
+        'ueditor.all.js',
+        'ueditor.parse.js',
+    ];
 
     /**
      * 注册服务
@@ -67,73 +93,36 @@ class ChisanheUeditorplusServiceProvider extends BaseServiceProvider
         \Dcat\Admin\Form::extend('ueditorplus', UeditorPlusField::class);
 
         // 加载视图路径
-        $this->loadViewsFrom($this->resourcePath('views'), self::NAME);
+        $this->loadViewsFrom($this->resourcePath('views'), $this->getName());
 
         // 加载语言包
-        $this->loadTranslationsFrom($this->resourcePath('lang'), self::NAME);
+        $this->loadTranslationsFrom($this->resourcePath('lang'), $this->getName());
 
         // 注册路由
-        $this->registerRoutes();
-
-        // 发布资源文件
-        $this->publishAssets();
-
-        // 发布配置文件
-        $this->publishConfig();
-    }
-
-    /**
-     * 注册路由
-     * 
-     * 在 Dcat Admin 应用中注册 UEditor Plus 的路由
-     */
-    protected function registerRoutes()
-    {
-        // 在 Dcat Admin 应用启动完成后注册路由
         $this->app->booted(function () {
-            // 获取路由配置
-            $routeConfig = UeditorPlus::getUploadConfig('route', []);
-            
-            // 合并默认配置和用户配置
-            $attributes = [
-                'prefix' => isset($routeConfig['prefix']) ? $routeConfig['prefix'] : 'ueditorplus',
-                'middleware' => isset($routeConfig['middleware']) ? $routeConfig['middleware'] : ['web', 'admin'],
-            ];
+            Admin::app()->routes(function ($router) {
+                $attributes = array_merge([
+                    'prefix'     => config('admin.route.prefix'),
+                    'middleware' => config('admin.route.middleware'),
+                ], $this->config('route', []));
 
-            // 注册路由
-            Admin::app()->routes(function ($router) use ($attributes) {
                 $router->group($attributes, function ($router) {
-                    // 加载路由文件
                     require __DIR__ . '/Http/routes.php';
                 });
             });
         });
-    }
 
-    /**
-     * 发布静态资源文件
-     * 
-     * 将扩展包的静态资源发布到应用的 public 目录
-     */
-    protected function publishAssets()
-    {
-        // 发布资源到 public 目录
+        // 发布静态资源和配置文件
         $this->publishes([
-            $this->resourcePath('assets') => public_path('vendor/' . self::NAME),
-        ], 'chisanhe-ueditorplus-assets');
-    }
-
-    /**
-     * 发布配置文件
-     * 
-     * 将扩展包的配置文件发布到应用的 config 目录
-     */
-    protected function publishConfig()
-    {
-        // 发布配置文件到 config 目录
-        $this->publishes([
+            $this->resourcePath('assets') => public_path('vendor/chisanhe/ueditorplus'),
             __DIR__ . '/../config/ueditorplus.php' => config_path('ueditorplus.php'),
-        ], 'chisanhe-ueditorplus-config');
+        ], $this->getName());
+
+        // 调用父类初始化方法
+        parent::init();
+
+        // 调用 publishable 注册资源发布（父类的 init 不会调用它）
+        $this->publishable();
     }
 
     /**

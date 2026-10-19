@@ -224,7 +224,7 @@
         },
         
         // 自动保存配置
-        autoSaveEnable: true,
+        autoSaveEnable: false,
         autoSaveRestore: false,
         autoSaveKey: null,
         
@@ -254,7 +254,6 @@
         
         // 快捷菜单
         shortcutMenu: [
-            "ai",
             "bold",
             "italic",
             "underline",
@@ -266,8 +265,7 @@
             "imageleft",
             "imagecenter",
             "imageright",
-            "insertimage",
-            "formula"
+            "insertimage"
         ],
         
         // 快捷菜单显示配置

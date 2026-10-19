@@ -198,13 +198,22 @@ return [
     // ==================== 远程图片抓取配置 ====================
 
     /**
+     * 是否启用远程图片自动抓取
+     *
+     * 启用后，粘贴内容时会自动检测并下载外部图片到本地
+     *
+     * @var bool
+     */
+    'catchRemoteImageEnable' => true,
+
+    /**
      * 允许抓取的本地域名
      * 
      * 远程图片在这些域名下时不会被抓取到本地
      * 
      * @var array
      */
-    'catcherLocalDomain' => ['127.0.0.1', 'localhost', 'img.baidu.com'],
+    'catcherLocalDomain' => ['127.0.0.1', 'localhost'],
 
     /**
      * 远程图片抓取 action 名称
