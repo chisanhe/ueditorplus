@@ -1,0 +1,37 @@
+{
+    "name": "chisanhe/ueditorplus",
+    "description": "Dcat Admin UeditorPlus 富文本编辑器扩展，基于 ueditorplus 开发",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "laravel",
+        "dcat-admin",
+        "ueditor",
+        "ueditorplus",
+        "富文本编辑器"
+    ],
+    "require": {
+        "php": ">=7.0 <=8.3",
+        "laravel/framework": "^5.8|^6|^7|^8|^9|^10|^11",
+        "dcat/laravel-admin": "^2.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Chisanhe\\Ueditorplus\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Chisanhe\\Ueditorplus\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Chisanhe\\Ueditorplus\\ChisanheUeditorplusServiceProvider"
+            ]
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
