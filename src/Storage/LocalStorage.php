@@ -1073,7 +1073,19 @@ class LocalStorage implements StorageInterface
 
         $url = method_exists($this->disk, 'url') ? $this->disk->url($path) : '/' . $path;
 
-        return $prefix === '' || $prefix === null ? $url : rtrim($prefix, '/') . '/' . ltrim($url, '/');
+        if ($prefix === '' || $prefix === null) {
+            return $url;
+        }
+
+        // 配置了 UrlPrefix（如 CDN 域名）时，只拼接 URL 中的路径部分，
+        // 避免生成 "https://cdn.xxx.com/http://127.0.0.1:8000/storage/..." 这种错误地址
+        $urlPath = parse_url($url, PHP_URL_PATH);
+
+        if (!$urlPath) {
+            $urlPath = '/' . $path;
+        }
+
+        return rtrim($prefix, '/') . $urlPath;
     }
 
     /**
