@@ -29,4 +29,9 @@ return [
     'ERROR_SIZE_EXCEED' => 'File size exceeds limit',
     'ERROR_TYPE_NOT_ALLOWED' => 'File type is not allowed',
     'ERROR_HTTP_LINK' => 'Invalid HTTP(S) link',
+    'ERROR_FETCH' => 'Failed to fetch remote image',
+    'ERROR_EMPTY_FILE' => 'Remote image content is empty',
+    'ERROR_NOT_IMAGE' => 'Remote resource is not a valid image',
+    'ERROR_WRITE' => 'Failed to save the file to disk',
+    'ERROR_TIMEOUT' => 'Remote image fetch timed out',
 ];

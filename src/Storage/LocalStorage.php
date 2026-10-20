@@ -80,7 +80,7 @@ class LocalStorage implements StorageInterface
         // 构建成功响应
         $response = [
             'state' => 'SUCCESS',
-            'url' => $this->getUrl($filename),
+            'url' => $this->getUrl($filename, Arr::get($config, 'url_prefix', '')),
             'title' => $filename,
             'original' => $file->getClientOriginalName(),
             'type' => $file->getExtension(),
@@ -106,38 +106,98 @@ class LocalStorage implements StorageInterface
         
         // 获取要抓取的图片 URL 列表
         $fieldName = Arr::get($config, 'field_name', 'source');
-        $urls = $request->get($fieldName, []);
+        $urls = $this->resolveUrls($request, $fieldName);
 
         // 检查是否有 URL
         if (empty($urls)) {
             return $this->error('UPLOAD_ERR_NO_FILE');
         }
 
+        // 单次最大抓取数量限制，防止一次粘贴过多图片导致请求超时
+        $limit = (int) UeditorPlus::getUploadConfig('catcherMaxCount', 50);
+        if ($limit > 0 && count($urls) > $limit) {
+            $urls = array_slice($urls, 0, $limit);
+        }
+
         // 去重处理
-        $urls = array_unique($urls);
-        
+        $urls = array_values(array_unique($urls));
+
         $list = [];
         foreach ($urls as $url) {
             // 下载单个图片
             $img = $this->download($url, $config);
-            
+
             if ($img['state'] === 'SUCCESS') {
-                // 存储图片内容
-                $this->storeContent($img['file'], $img['filename']);
+                // 存储图片内容，写入失败时标记为错误
+                if (!$this->storeContent($img['file'], $img['filename'])) {
+                    $img['state'] = 'ERROR_WRITE';
+                    $img['url'] = '';
+                }
             }
-            
-            // 移除 file 字段（不需要返回）
-            unset($img['file']);
+
+            // 失败项返回可读的错误信息
+            if ($img['state'] !== 'SUCCESS') {
+                $img['state'] = $this->transError($img['state']);
+            }
+
+            // 移除内部字段（不需要返回给前端）
+            unset($img['file'], $img['filename']);
             $list[] = $img;
         }
 
-        // 构建响应
+        // 构建响应（UEditor 协议要求存在 state 字段）
         $response = [
             'state' => empty($list) ? 'ERROR' : 'SUCCESS',
             'list' => $list
         ];
 
         return response()->json($response);
+    }
+
+    /**
+     * 从请求中解析待抓取的图片地址
+     *
+     * 除标准的 source / source[] 字段外，还兼容 UEditor 内置 catchremoteimage 插件
+     * （UEditorPlus 前端自带该插件，字段名由 catcherFieldName 决定，未配置时不可控），
+     * 因此这里额外兜底：从请求参数中找出第一个「字符串数组且元素为 http 地址」的字段。
+     *
+     * @param Request $request Laravel 请求对象
+     * @param string $fieldName 配置的表单字段名
+     * @return array
+     */
+    protected function resolveUrls(Request $request, $fieldName)
+    {
+        $urls = $request->get($fieldName);
+
+        if (is_array($urls) && !empty($urls)) {
+            return array_values(array_filter($urls, 'is_string'));
+        }
+
+        if (is_string($urls) && $urls !== '') {
+            // 支持逗号分隔 / JSON 数组的传参方式
+            if (strpos($urls, '[') === 0) {
+                $decoded = json_decode($urls, true);
+                if (is_array($decoded)) {
+                    return array_values(array_filter($decoded, 'is_string'));
+                }
+            }
+
+            return array($urls);
+        }
+
+        // 兜底：遍历所有请求参数，找出图片地址数组
+        foreach ($request->request->all() as $key => $value) {
+            if (!is_array($value) || empty($value)) {
+                continue;
+            }
+
+            $first = reset($value);
+            if (is_string($first) && preg_match('/^https?:\/\//i', $first)) {
+                return array_values(array_filter($value, 'is_string'));
+            }
+        }
+
+        return array();
     }
 
     /**
@@ -151,55 +211,466 @@ class LocalStorage implements StorageInterface
      */
     protected function download($url, $config)
     {
-        // 检查 URL 是否为有效的 HTTP(S) 链接
-        if (strpos($url, 'http') !== 0) {
+        // 取远程抓取的专属配置项（超时、UA、Referer 等）
+        $options = $this->remoteOptions();
+
+        // 规范化 URL：去掉首尾空白
+        $url = trim((string) $url);
+        if ($url === '') {
             return $this->errorResult('ERROR_HTTP_LINK', $url);
         }
 
-        // 解析 URL 获取路径信息
-        $pathRes = parse_url($url);
-        $img = new \SplFileInfo($pathRes['path']);
-        $original = $img->getFilename();
-        $ext = $img->getExtension() ?: 'jpg';
-        $title = md5($url) . '.' . $ext;
-        $filename = $this->formatPath($config['path_format'], $title);
+        // 补全协议相对地址 //host/a.jpg -> https://host/a.jpg
+        if (strpos($url, '//') === 0) {
+            $url = 'https:' . $url;
+        }
 
-        // 构建返回信息
-        $info = [
+        // 仅允许 HTTP(S) 协议
+        if (!preg_match('/^https?:\/\//i', $url)) {
+            return $this->errorResult('ERROR_HTTP_LINK', $url);
+        }
+
+        // 解析 URL
+        $pathRes = parse_url($url);
+        if (empty($pathRes['host'])) {
+            return $this->errorResult('ERROR_HTTP_LINK', $url);
+        }
+
+        // 解析原始文件名
+        $path = isset($pathRes['path']) ? $pathRes['path'] : '';
+        $original = basename($path) !== '' ? basename($path) : md5($url);
+
+        // 构建基础返回信息
+        $info = array(
             'state' => 'SUCCESS',
-            'url' => $this->getUrl($filename),
-            'title' => $title,
-            'original' => $original,
+            'url' => '',
+            'title' => '',
+            'original' => urldecode($original),
             'source' => $url,
             'size' => 0,
             'file' => '',
-            'filename' => $filename,
-        ];
+            'filename' => '',
+        );
 
-        // 创建 HTTP 请求上下文
-        $context = stream_context_create([
-            'http' => [
-                'follow_location' => true, // 自动跟随重定向
-                'timeout' => 30, // 超时时间 30 秒
-            ]
-        ]);
+        // 请求远程资源
+        $response = $this->requestUrl($url, $options);
+        if (!$response['ok']) {
+            // 记录失败原因到日志，方便排查（30 秒内的重复错误不会刷屏）
+            $this->logFetchError($url, $response['error']);
 
-        // 打开远程文件流
-        $file = @fopen($url, 'r', false, $context);
-        
-        if ($file === false) {
-            $info['state'] = 'ERROR';
+            $info['state'] = 'ERROR_FETCH';
+
             return $info;
         }
 
-        // 读取文件内容
-        $content = stream_get_contents($file);
-        fclose($file);
-        
+        $content = $response['content'];
+        $length = strlen($content);
+
+        if ($length <= 0) {
+            $info['state'] = 'ERROR_EMPTY_FILE';
+
+            return $info;
+        }
+
+        // 大小校验
+        $maxSize = (int) Arr::get($config, 'max_size', 0);
+        if ($maxSize > 0 && $length > $maxSize) {
+            $info['state'] = 'ERROR_SIZE_EXCEED';
+            $info['size'] = $length;
+
+            return $info;
+        }
+
+        // 内容是否为有效图片
+        if (!$this->isImageContent($content)) {
+            $info['state'] = 'ERROR_NOT_IMAGE';
+
+            return $info;
+        }
+
+        // 根据 URL 与响应头推断扩展名
+        $ext = $this->guessExtension($url, $response['type']);
+
+        // 扩展名白名单校验
+        $allowFiles = Arr::get($config, 'allow_files', array());
+        if (!empty($allowFiles)) {
+            $allowFiles = array_map('strtolower', $allowFiles);
+            if (!in_array('.' . $ext, $allowFiles, true)) {
+                $info['state'] = 'ERROR_TYPE_NOT_ALLOWED';
+
+                return $info;
+            }
+        }
+
+        // 生成文件名与存储路径
+        $title = md5($url) . '.' . $ext;
+        $pathFormat = Arr::get($config, 'path_format', 'ueditorplus/catcher/{yyyy}{mm}{dd}/{time}{rand:6}');
+        $filename = $this->formatPath($pathFormat, $title);
+
+        $info['title'] = $title;
         $info['file'] = $content;
-        $info['size'] = strlen($content);
+        $info['filename'] = $filename;
+        $info['size'] = $length;
+        $info['url'] = $this->getUrl($filename, Arr::get($config, 'url_prefix', ''));
 
         return $info;
+    }
+
+    /**
+     * 获取远程请求配置项
+     *
+     * 读取配置文件中的 catcher 相关配置，并提供安全的默认值
+     *
+     * @return array
+     */
+    protected function remoteOptions()
+    {
+        $defaultUa = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+            . '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+        $timeout = (int) UeditorPlus::getUploadConfig('catcherTimeout', 30);
+        if ($timeout <= 0) {
+            $timeout = 30;
+        }
+
+        $userAgent = UeditorPlus::getUploadConfig('catcherUserAgent', $defaultUa);
+        if ($userAgent === '' || $userAgent === null) {
+            $userAgent = $defaultUa;
+        }
+
+        $verifySsl = (bool) UeditorPlus::getUploadConfig('catcherVerifySsl', true);
+
+        return array(
+            'timeout' => $timeout,
+            'user_agent' => $userAgent,
+            'verify_ssl' => $verifySsl,
+            // referer 策略由 getReferer() 按具体 URL 动态计算
+            'referer_policy' => UeditorPlus::getUploadConfig('catcherReferer', 'auto'),
+        );
+    }
+
+    /**
+     * 计算请求 Referer
+     *
+     * auto: 使用远程图片所在站点的根地址（多数图床/微信正文图片需要）
+     * none: 不发送 Referer
+     * 其他: 原样作为 Referer 发送
+     *
+     * @param string $url 远程图片地址
+     * @param string $policy Referer 策略
+     * @return string
+     */
+    protected function getReferer($url, $policy)
+    {
+        if ($policy === 'none' || $policy === '' || $policy === null) {
+            return '';
+        }
+
+        if ($policy !== 'auto') {
+            return (string) $policy;
+        }
+
+        $parts = parse_url($url);
+
+        if (empty($parts['host'])) {
+            return '';
+        }
+
+        return $parts['scheme'] . '://' . $parts['host'] . '/';
+    }
+
+    /**
+     * 请求远程地址并返回内容
+     *
+     * 优先使用 curl 扩展（可携带 UA / Referer，兼容性最好），
+     * 不可用时降级到 stream 方式
+     *
+     * @param string $url 远程地址
+     * @param array $options 请求配置
+     * @return array ok / content / type / error
+     */
+    protected function requestUrl($url, array $options)
+    {
+        if (function_exists('curl_init')) {
+            return $this->curlGet($url, $options);
+        }
+
+        return $this->streamGet($url, $options);
+    }
+
+    /**
+     * 使用 curl 请求远程资源
+     *
+     * @param string $url 远程地址
+     * @param array $options 请求配置
+     * @return array
+     */
+    protected function curlGet($url, array $options)
+    {
+        $result = array('ok' => false, 'content' => '', 'type' => '', 'error' => '');
+
+        $timeout = Arr::get($options, 'timeout', 30);
+        $verifySsl = Arr::get($options, 'verify_ssl', true) ? 1 : 0;
+        $referer = $this->getReferer($url, Arr::get($options, 'referer_policy', 'auto'));
+
+        $ch = curl_init($url);
+
+        curl_setopt_array($ch, array(
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_HEADER => false,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS => 5,
+            CURLOPT_CONNECTTIMEOUT => min(10, $timeout),
+            CURLOPT_TIMEOUT => $timeout,
+            CURLOPT_USERAGENT => Arr::get($options, 'user_agent', ''),
+            CURLOPT_SSL_VERIFYPEER => $verifySsl,
+            CURLOPT_SSL_VERIFYHOST => $verifySsl ? 2 : 0,
+            CURLOPT_ENCODING => '',
+            CURLOPT_HTTPHEADER => array(
+                'Accept: image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+                'Accept-Language: zh-CN,zh;q=0.9,en;q=0.8',
+            ),
+        ));
+
+        if ($referer !== '') {
+            curl_setopt($ch, CURLOPT_REFERER, $referer);
+        }
+
+        $content = curl_exec($ch);
+        $error = curl_error($ch);
+        $errno = curl_errno($ch);
+        $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $type = (string) curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+        curl_close($ch);
+
+        if ($content === false || $errno) {
+            $result['error'] = 'curl error ' . $errno . ': ' . $error;
+
+            return $result;
+        }
+
+        if ($status >= 400 || $status === 0) {
+            $result['error'] = 'HTTP status ' . $status;
+
+            return $result;
+        }
+
+        $result['ok'] = true;
+        $result['content'] = $content;
+        $result['type'] = $type;
+
+        return $result;
+    }
+
+    /**
+     * 使用 stream 方式请求远程资源（curl 不可用时的降级方案）
+     *
+     * @param string $url 远程地址
+     * @param array $options 请求配置
+     * @return array
+     */
+    protected function streamGet($url, array $options)
+    {
+        $result = array('ok' => false, 'content' => '', 'type' => '', 'error' => '');
+
+        $timeout = Arr::get($options, 'timeout', 30);
+        $verifySsl = Arr::get($options, 'verify_ssl', true);
+        $referer = $this->getReferer($url, Arr::get($options, 'referer_policy', 'auto'));
+
+        $header = 'Accept: image/avif,image/webp,image/apng,image/*,*/*;q=0.8' . "\r\n";
+        if (!empty($options['user_agent'])) {
+            $header .= 'User-Agent: ' . $options['user_agent'] . "\r\n";
+        }
+        if ($referer !== '') {
+            $header .= 'Referer: ' . $referer . "\r\n";
+        }
+
+        $context = stream_context_create(array(
+            'http' => array(
+                'method' => 'GET',
+                'timeout' => $timeout,
+                'follow_location' => 1,
+                'max_redirects' => 5,
+                'ignore_errors' => true,
+                'header' => $header,
+            ),
+            'ssl' => array(
+                'verify_peer' => $verifySsl,
+                'verify_peer_name' => $verifySsl,
+            ),
+        ));
+
+        $fp = @fopen($url, 'r', false, $context);
+        if ($fp === false) {
+            $result['error'] = 'fopen failed: ' . json_encode(error_get_last());
+
+            return $result;
+        }
+
+        $content = stream_get_contents($fp);
+        $meta = stream_get_meta_data($fp);
+        fclose($fp);
+
+        if ($content === false || $content === '') {
+            $result['error'] = 'empty response';
+
+            return $result;
+        }
+
+        $type = '';
+        if (isset($meta['wrapper_data']) && is_array($meta['wrapper_data'])) {
+            foreach ($meta['wrapper_data'] as $h) {
+                if (stripos($h, 'Content-Type:') === 0) {
+                    $type = trim(substr($h, strlen('Content-Type:')));
+                    break;
+                }
+            }
+        }
+
+        $result['ok'] = true;
+        $result['content'] = $content;
+        $result['type'] = $type;
+
+        return $result;
+    }
+
+    /**
+     * 判断二进制内容是否为图片
+     *
+     * 优先使用 getimagesizefromstring，若不支持或识别失败，
+     * 再通过文件头魔数做兜底判断（兼容 webp 等格式）
+     *
+     * @param string $content 文件内容
+     * @return bool
+     */
+    protected function isImageContent($content)
+    {
+        if (function_exists('getimagesizefromstring')) {
+            $size = @getimagesizefromstring($content);
+            if (is_array($size) && !empty($size[0])) {
+                return true;
+            }
+        }
+
+        $magic = array(
+            "\xFF\xD8\xFF",          // jpg
+            "\x89PNG",               // png
+            'GIF8',                  // gif
+            'BM',                    // bmp
+            'RIFF',                  // webp
+            'II',                    // tiff
+            'MM',                    // tiff
+            "\x00\x00\x01\x00",      // ico
+        );
+
+        foreach ($magic as $sign) {
+            if (strncmp($content, $sign, strlen($sign)) === 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * 推断图片扩展名
+     *
+     * 依次从 URL 路径、query 参数（如微信正文图片 wx_fmt=jpeg）、
+     * 响应 Content-Type 推断，最后默认 jpg
+     *
+     * @param string $url 远程地址
+     * @param string $contentType 响应 Content-Type
+     * @return string 小写扩展名（不含点）
+     */
+    protected function guessExtension($url, $contentType = '')
+    {
+        $parts = parse_url($url);
+
+        // 1. 从路径中取扩展名
+        if (!empty($parts['path'])) {
+            $ext = strtolower(pathinfo($parts['path'], PATHINFO_EXTENSION));
+            $ext = preg_replace('/[^a-z0-9].*$/i', '', $ext);
+            if ($ext !== '' && strlen($ext) <= 5) {
+                return $ext;
+            }
+        }
+
+        // 2. 从 query 参数推断（微信正文图片：?wx_fmt=jpeg）
+        if (!empty($parts['query'])) {
+            parse_str($parts['query'], $query);
+            foreach (array('wx_fmt', 'format', 'imageView', 't', 'fmt') as $key) {
+                if (!empty($query[$key]) && is_string($query[$key])) {
+                    $ext = strtolower(preg_replace('/[^a-z0-9].*$/i', '', $query[$key]));
+                    $ext = preg_replace('/^\d+$/', '', $ext);
+                    if ($ext !== '' && strlen($ext) <= 5) {
+                        return $ext;
+                    }
+                }
+            }
+        }
+
+        // 3. 从 Content-Type 推断
+        $ext = $this->extensionFromMime($contentType);
+        if ($ext !== '') {
+            return $ext;
+        }
+
+        return 'jpg';
+    }
+
+    /**
+     * 根据 MIME 类型返回扩展名
+     *
+     * @param string $mime MIME 类型
+     * @return string
+     */
+    protected function extensionFromMime($mime)
+    {
+        $mime = strtolower(trim((string) $mime));
+        if ($mime === '') {
+            return '';
+        }
+
+        // 去掉 charset 等附加信息
+        $pos = strpos($mime, ';');
+        if ($pos !== false) {
+            $mime = trim(substr($mime, 0, $pos));
+        }
+
+        $map = array(
+            'image/jpeg' => 'jpg',
+            'image/jpg' => 'jpg',
+            'image/pjpeg' => 'jpg',
+            'image/png' => 'png',
+            'image/x-png' => 'png',
+            'image/gif' => 'gif',
+            'image/bmp' => 'bmp',
+            'image/x-ms-bmp' => 'bmp',
+            'image/webp' => 'webp',
+            'image/x-icon' => 'ico',
+            'image/vnd.microsoft.icon' => 'ico',
+            'image/tiff' => 'tiff',
+            'image/svg+xml' => 'svg',
+            'image/avif' => 'avif',
+        );
+
+        return isset($map[$mime]) ? $map[$mime] : '';
+    }
+
+    /**
+     * 记录远程抓取失败原因
+     *
+     * @param string $url 远程地址
+     * @param string $error 错误信息
+     * @return void
+     */
+    protected function logFetchError($url, $error)
+    {
+        if (!function_exists('app') || !class_exists('Illuminate\Support\Facades\Log')) {
+            return;
+        }
+
+        \Illuminate\Support\Facades\Log::warning('[ueditorplus] 远程图片抓取失败: ' . $url . ' - ' . $error);
     }
 
     /**
@@ -217,7 +688,7 @@ class LocalStorage implements StorageInterface
     {
         try {
             // 获取目录下所有文件
-            $allFiles = $this->disk->listContents($path, true);
+            $allFiles = $this->disk->listContents($this->normalizePath($path), true);
             
             // 分页处理
             $files = $this->paginateFiles($allFiles, $start, $size, $allowFiles);
@@ -313,7 +784,7 @@ class LocalStorage implements StorageInterface
     protected function store(UploadedFile $file, $filename)
     {
         // 使用文件系统的 put 方法保存文件
-        return $this->disk->put($filename, fopen($file->getRealPath(), 'r+'));
+        return $this->disk->put($this->normalizePath($filename), fopen($file->getRealPath(), 'r+'));
     }
 
     /**
@@ -327,7 +798,23 @@ class LocalStorage implements StorageInterface
      */
     protected function storeContent($content, $filename)
     {
-        return $this->disk->put($filename, $content);
+        return $this->disk->put($this->normalizePath($filename), $content);
+    }
+
+    /**
+     * 规范化存储路径
+     *
+     * 配置中的路径格式常以 / 开头（如 /ueditorplus/image/...），
+     * 与磁盘 root 拼接时可能产生双斜杠或越过根目录，这里统一处理
+     *
+     * @param string $path 原始路径
+     * @return string
+     */
+    protected function normalizePath($path)
+    {
+        $path = str_replace('\\', '/', (string) $path);
+
+        return trim(preg_replace('#/+#', '/', $path), '/');
     }
 
     /**
@@ -349,7 +836,7 @@ class LocalStorage implements StorageInterface
         // 检查文件大小
         $maxSize = Arr::get($config, 'max_size', 0);
         if ($maxSize > 0 && $file->getSize() > $maxSize) {
-            return 'upload.ERROR_SIZE_EXCEED';
+            return 'ERROR_SIZE_EXCEED';
         }
 
         // 检查文件类型
@@ -358,7 +845,7 @@ class LocalStorage implements StorageInterface
             $ext = '.' . strtolower($file->getClientOriginalExtension());
             $allowFilesLower = array_map('strtolower', $allowFiles);
             if (!in_array($ext, $allowFilesLower)) {
-                return 'upload.ERROR_TYPE_NOT_ALLOWED';
+                return 'ERROR_TYPE_NOT_ALLOWED';
             }
         }
 
@@ -423,17 +910,37 @@ class LocalStorage implements StorageInterface
 
         // 遍历查找匹配的 action 配置
         foreach ($prefixes as $prefix) {
-            $actionName = $prefix . 'ActionName';
-            if ($action == $upload[$actionName]) {
-                $config = [
-                    'action' => Arr::get($upload, $actionName),
-                    'field_name' => Arr::get($upload, $prefix . 'FieldName', 'upfile'),
-                    'max_size' => Arr::get($upload, $prefix . 'MaxSize', 0),
-                    'allow_files' => Arr::get($upload, $prefix . 'AllowFiles', []),
-                    'path_format' => Arr::get($upload, $prefix . 'PathFormat', ''),
-                ];
-                break;
+            $actionName = Arr::get($upload, $prefix . 'ActionName');
+
+            // 注意：必须使用 Arr::get 取值，直接使用 $upload[$actionName] 时，
+            // 当配置中不存在 scrawl / snapscreen 等键（UeditorPlus::getConfig() 未返回）会触发
+            // "Undefined index" 错误，在 Laravel 中会被转换成 ErrorException 导致接口 500。
+            // 远程抓图（catchimage）在匹配到 scrawl 时正好会命中该问题。
+            if (empty($actionName) || $action !== $actionName) {
+                continue;
             }
+
+            $config = [
+                'action' => $actionName,
+                'field_name' => Arr::get($upload, $prefix . 'FieldName', 'upfile'),
+                'max_size' => Arr::get($upload, $prefix . 'MaxSize', 0),
+                'allow_files' => Arr::get($upload, $prefix . 'AllowFiles', []),
+                'path_format' => Arr::get($upload, $prefix . 'PathFormat', ''),
+                'url_prefix' => Arr::get($upload, $prefix . 'UrlPrefix', ''),
+            ];
+            break;
+        }
+
+        if (empty($config)) {
+            // 未匹配到任何 action 时返回默认配置，避免调用方出现 undefined index
+            $config = [
+                'action' => $action,
+                'field_name' => 'upfile',
+                'max_size' => 0,
+                'allow_files' => [],
+                'path_format' => 'ueditorplus/{yyyy}{mm}{dd}/{time}{rand:6}',
+                'url_prefix' => '',
+            ];
         }
 
         return $config;
@@ -468,7 +975,35 @@ class LocalStorage implements StorageInterface
      */
     protected function error($message)
     {
-        return response()->json(['state' => trans("ueditorplus::upload.{$message}")]);
+        return response()->json(['state' => $this->transError($message)]);
+    }
+
+    /**
+     * 翻译错误信息
+     * 
+     * 语言包不存在对应键时返回原始错误信息，避免出现空的 state
+     * 
+     * @param string $message 错误信息键名
+     * @return string
+     */
+    protected function transError($message)
+    {
+        // 语言包在两个命名空间下都有注册（扩展名 chisanhe.ueditorplus 与短名 ueditorplus），
+        // 这里依次尝试，避免某些加载时机下拿不到翻译文本
+        $keys = array(
+            'ueditorplus::upload.' . $message,
+            'chisanhe.ueditorplus::upload.' . $message,
+        );
+
+        foreach ($keys as $key) {
+            $line = trans($key);
+
+            if (is_string($line) && $line !== '' && $line !== $key) {
+                return $line;
+            }
+        }
+
+        return $message;
     }
 
     /**
@@ -529,11 +1064,16 @@ class LocalStorage implements StorageInterface
      * 获取文件 URL
      * 
      * @param string $filename 文件名/路径
+     * @param string $prefix 可选的 URL 前缀（如 CDN 域名）
      * @return string 完整的访问 URL
      */
-    public function getUrl($filename)
+    public function getUrl($filename, $prefix = '')
     {
-        return $this->disk->url($filename);
+        $path = $this->normalizePath($filename);
+
+        $url = method_exists($this->disk, 'url') ? $this->disk->url($path) : '/' . $path;
+
+        return $prefix === '' || $prefix === null ? $url : rtrim($prefix, '/') . '/' . ltrim($url, '/');
     }
 
     /**
@@ -549,6 +1089,11 @@ class LocalStorage implements StorageInterface
         // 如果未指定磁盘，获取配置中的默认值
         if (!$disk) {
             $disk = UeditorPlus::getUploadConfig('disk', 'public');
+        }
+
+        // 配置中 disk 为空时使用 Dcat Admin 的默认磁盘
+        if (!is_string($disk) || $disk === '') {
+            $disk = 'public';
         }
 
         // 获取磁盘实例

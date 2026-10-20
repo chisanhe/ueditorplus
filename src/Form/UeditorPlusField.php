@@ -98,7 +98,12 @@ class UeditorPlusField extends Field
      */
     public function height($height)
     {
-        $this->options['initialFrameHeight'] = (int) $height;
+        $height = (int) $height;
+        $this->options['initialFrameHeight'] = $height;
+        // 同时设置 minFrameHeight，防止 UEditor 内部 auto-height 逻辑覆盖 initialFrameHeight
+        $this->options['minFrameHeight'] = $height;
+        // 关闭自动高度模式，让 initialFrameHeight 固定生效
+        $this->options['autoHeightEnabled'] = false;
 
         return $this;
     }
@@ -134,6 +139,10 @@ class UeditorPlusField extends Field
             // 使用 Dcat Admin 的路径处理
             $this->options['serverUrl'] = admin_url($url);
         }
+        // 仅在需要时启用从服务器加载配置
+        // 例如：需要后端动态返回 toolbars 配置等场景
+        // 默认关闭，避免服务器配置覆盖 PHP 端的 initialFrameHeight 等设置
+        // $this->options['loadConfigFromServer'] = true;
 
         return $this;
     }
@@ -357,7 +366,16 @@ class UeditorPlusField extends Field
             $this->server('ueditorplus/serve');
         }
 
-        // 添加扩展配置
+        // 关闭 UEditorPlus 内置的 catchremoteimage 插件：
+        // 1) 它会与本扩展的批量抓取逻辑重复请求同一张图片；
+        // 2) 内置插件依赖 catcherFieldName / catcherActionName 等配置，
+        //    缺失时会把图片 src 替换成 loading 占位图后无法恢复。
+        // 这里统一交给本扩展的抓图逻辑处理，避免冲突。
+        $this->options['catchRemoteImageEnable'] = false;
+
+        // 注入扩展配置（135编辑器、秀米编辑器等）
+        // 注意：loadConfigFromServer 由 server() 方法设置，默认为 false
+        // 如果需要从服务器加载配置（如后端返回的 toolbars 动态配置），显式调用 server() 方法
         if ($this->enable135Editor) {
             $this->options['editor135Config'] = $this->editor135Config;
         }
@@ -405,7 +423,17 @@ class UeditorPlusField extends Field
         // 设置元素属性
         $this->attribute('id', $id);
         $this->addVariables(['id' => $id]);
-        
+
+        // 强制关闭自动高度，确保 initialFrameHeight 生效（在 formatOptions 之前设置）
+        $this->options['autoHeightEnabled'] = false;
+
+        // 从配置文件读取 initialFrameHeight 默认值（如果未通过 ->height() 设置）
+        $configHeight = (int) config('ueditorplus.initialFrameHeight', 400);
+        if (!isset($this->options['initialFrameHeight'])) {
+            $this->options['initialFrameHeight'] = $configHeight;
+            $this->options['minFrameHeight'] = $configHeight;
+        }
+
         // 格式化配置
         $opts = $this->formatOptions();
 
@@ -420,6 +448,9 @@ class UeditorPlusField extends Field
         $remoteImageEnable = Arr::get(config('ueditorplus', []), 'catchRemoteImageEnable', true)
             && ($this->options['remoteImageEnable'] ?? true);
 
+        // 是否从服务器加载配置
+        $loadConfigFromServer = $this->options['loadConfigFromServer'] ?? false;
+
         // 关键修复：通过 json_encode 直接将原始 HTML 传给 JS 变量，
         // 绕过 hidden input HTML 属性的 < 字符编码问题（浏览器会自动将属性中的 < 编码为 &lt;）
         $contentJson = json_encode((string) $this->value(), JSON_UNESCAPED_UNICODE);
@@ -427,6 +458,8 @@ class UeditorPlusField extends Field
         // 将 PHP 值转为 JS 字面量（供 heredoc 直接插入，避免 {表达式} 语法冲突）
         $remoteImageEnableJS = $remoteImageEnable ? 'true' : 'false';
         $serverUrlJS = json_encode($serverUrl);
+        $loadConfigFromServerJS = $loadConfigFromServer ? 'true' : 'false';
+        $diskJS = json_encode((string) $disk);
 
         // 生成初始化脚本（heredoc 直接赋值，所有 PHP 变量用拼接注入）
         $this->script = <<<JS
@@ -435,6 +468,8 @@ class UeditorPlusField extends Field
     var remoteImageEnable = {$remoteImageEnableJS};
     if (typeof UEEDITOR_CONFIG !== 'undefined') {
         UEEDITOR_CONFIG.serverUrl = {$serverUrlJS};
+        UEEDITOR_CONFIG.loadConfigFromServer = {$loadConfigFromServerJS};
+        UEEDITOR_CONFIG.catchRemoteImageEnable = remoteImageEnable;
     }
     var fetchTimer_{$id} = null;
     function showToast(message, type) {
@@ -459,6 +494,16 @@ class UeditorPlusField extends Field
     function hideProgress() {
         if (typeof Dcat !== 'undefined' && Dcat.NP && Dcat.NP.done) { Dcat.NP.done(); }
     }
+    function isRemoteSrc(src) {
+        if (!src || src.indexOf('http') !== 0) { return false; }
+        try {
+            var a = document.createElement('a');
+            a.href = src;
+            return !!a.host && a.host !== window.location.host;
+        } catch (e) {
+            return src.indexOf(window.location.host) === -1;
+        }
+    }
     function fetchAndReplaceRemoteImages(editor, action) {
         var body = editor.body || editor.document.body;
         if (!body) return;
@@ -467,7 +512,7 @@ class UeditorPlusField extends Field
         var imgs = body.querySelectorAll('img');
         for (var i = 0; i < imgs.length; i++) {
             var src = imgs[i].src || imgs[i].getAttribute('src') || '';
-            if (src && src.indexOf('http') === 0 && src.indexOf(window.location.host) === -1 && !seen[src]) {
+            if (isRemoteSrc(src) && !seen[src]) {
                 seen[src] = true;
                 remoteSrcs.push({ el: imgs[i], src: src });
             }
@@ -482,10 +527,10 @@ class UeditorPlusField extends Field
         showProgress();
         var tokenInput = document.querySelector('input[name=_token]');
         var csrfToken = tokenInput ? tokenInput.value : '';
-        var disk = 'public';
-        try { disk = editor.execCommand('serverparam', 'disk') || 'public'; } catch (e) {}
+        var disk = {$diskJS};
         var xhr = new XMLHttpRequest();
-        xhr.open('POST', serverUrl + '?action=catchimage&disk=' + encodeURIComponent(disk), true);
+        var separator = serverUrl.indexOf('?') === -1 ? '?' : '&';
+        xhr.open('POST', serverUrl + separator + 'action=catchimage&disk=' + encodeURIComponent(disk), true);
         xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
         if (csrfToken) { xhr.setRequestHeader('X-CSRF-TOKEN', csrfToken); }
         var fd = new FormData();
@@ -504,6 +549,9 @@ class UeditorPlusField extends Field
                                 for (var m = 0; m < remoteSrcs.length; m++) {
                                     if (remoteSrcs[m].src === item.source) {
                                         remoteSrcs[m].el.src = item.url;
+                                        // UEditor 用 _src 记录原始地址，保持同步避免再次抓取
+                                        remoteSrcs[m].el.setAttribute('_src', item.url);
+                                        remoteSrcs[m].el.setAttribute('data-catch-result', '1');
                                         fetched++;
                                         break;
                                     }
@@ -513,6 +561,10 @@ class UeditorPlusField extends Field
                     } else { failed = total; }
                 } catch (e) { failed = total; }
             } else { failed = total; }
+            if (fetched > 0) {
+                // 关键：把本地化后的内容同步回隐藏域，否则提交表单时保存的还是外链地址
+                try { jQuery('#{$id}-value').val(editor.getContent()); } catch (e3) {}
+            }
             if (fetched === total) { showToast('\u8fdc\u7a0b\u56fe\u7247\u62d3\u53d6\u5b8c\u6210\u5171 ' + total + ' \u5f20', 'success'); }
             else if (fetched > 0) { showToast('\u8fdc\u7a0b\u56fe\u7247\u62d3\u53d6\u5b8c\u6210\uff1a' + fetched + ' \u5f20\u6210\u529f\uff0c' + failed + ' \u5f20\u5931\u8d25', 'error'); }
             else { showToast('\u8fdc\u7a0b\u56fe\u7247\u62d3\u53d6\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u670d\u52a1\u5668\u914d\u7f6e', 'error'); }
@@ -523,10 +575,14 @@ class UeditorPlusField extends Field
         };
         xhr.send(fd);
     }
-    var oldEditor = UE.getEditor('{$id}');
-    if (oldEditor && oldEditor.parentNode) { oldEditor.destroy(); }
     var ue = UE.getEditor('{$id}', {$opts});
     ue.ready(function() {
+        // 强制设置编辑器容器高度（防止 UEditor 内部 auto-height 逻辑覆盖配置值）
+        var frameHeight = ue.options.initialFrameHeight || ue.options.minFrameHeight || 400;
+        ue.setHeight ? ue.setHeight(frameHeight) : null;
+        if (ue.body && ue.body.parentNode) {
+            ue.body.parentNode.style.height = frameHeight + 'px';
+        }
         if (storedValue) {
             ue.setContent(storedValue);
             jQuery('#{$id}-value').val(storedValue);
@@ -573,6 +629,8 @@ JS;
         return array_merge(parent::variables(), [
             // 资源文件基础路径
             'homeUrl' => admin_asset('vendor/chisanhe/ueditorplus') . '/',
+            // serverUrl 用于覆盖 UEditor 默认配置
+            'serverUrl' => $this->options['serverUrl'] ?? '',
             // 内容用于 data 属性（htmlspecialchars + ENT_QUOTES 避免 HTML 解析问题）
             'contentDataAttr' => htmlspecialchars(
                 json_encode((string) $this->value(), JSON_UNESCAPED_UNICODE),

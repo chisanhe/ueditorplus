@@ -32,7 +32,7 @@ class UeditorPlus
      * 
      * @const string
      */
-    const VERSION = '1.0.0';
+    const VERSION = '1.0.1';
 
     /**
      * 服务提供者类名
@@ -158,6 +158,27 @@ class UeditorPlus
             'catcherUrlPrefix' => Arr::get($config, 'catcherUrlPrefix', ''),
             'catcherPathFormat' => Arr::get($config, 'catcherPathFormat', '/ueditorplus/catcher/{yyyy}{mm}{dd}/{time}{rand:6}'),
             'catcherLocalDomain' => Arr::get($config, 'catcherLocalDomain', ['127.0.0.1', 'localhost']),
+            'catcherTimeout' => Arr::get($config, 'catcherTimeout', 30),
+            'catcherMaxCount' => Arr::get($config, 'catcherMaxCount', 50),
+            'catcherUserAgent' => Arr::get($config, 'catcherUserAgent', ''),
+            'catcherReferer' => Arr::get($config, 'catcherReferer', 'auto'),
+            'catcherVerifySsl' => Arr::get($config, 'catcherVerifySsl', true),
+
+            // 涂鸦上传配置
+            'scrawlActionName' => Arr::get($config, 'scrawlActionName', 'uploadscrawl'),
+            'scrawlFieldName' => Arr::get($config, 'scrawlFieldName', 'upfile'),
+            'scrawlMaxSize' => Arr::get($config, 'scrawlMaxSize', 2048000),
+            'scrawlAllowFiles' => Arr::get($config, 'scrawlAllowFiles', ['.png']),
+            'scrawlUrlPrefix' => Arr::get($config, 'scrawlUrlPrefix', ''),
+            'scrawlPathFormat' => Arr::get($config, 'scrawlPathFormat', '/ueditorplus/scrawl/{yyyy}{mm}{dd}/{time}{rand:6}'),
+
+            // 截图上传配置
+            'snapscreenActionName' => Arr::get($config, 'snapscreenActionName', 'uploadimage'),
+            'snapscreenFieldName' => Arr::get($config, 'snapscreenFieldName', 'upfile'),
+            'snapscreenMaxSize' => Arr::get($config, 'snapscreenMaxSize', 2048000),
+            'snapscreenAllowFiles' => Arr::get($config, 'snapscreenAllowFiles', ['.png', '.jpg', '.jpeg', '.gif', '.bmp']),
+            'snapscreenUrlPrefix' => Arr::get($config, 'snapscreenUrlPrefix', ''),
+            'snapscreenPathFormat' => Arr::get($config, 'snapscreenPathFormat', '/ueditorplus/image/{yyyy}{mm}{dd}/{time}{rand:6}'),
             
             // 图片管理列表配置
             'imageManagerActionName' => Arr::get($config, 'imageManagerActionName', 'listimage'),
@@ -182,6 +203,9 @@ class UeditorPlus
             // 其他配置
             'hashFilename' => Arr::get($config, 'hashFilename', true),
             'disk' => Arr::get($config, 'disk', 'public'),
+            // 远程图片抓取开关（前端 UEditor 会读取此字段）
+            'catchRemoteImageEnable' => Arr::get($config, 'catchRemoteImageEnable', true),
+            'catchRemoteImage' => Arr::get($config, 'catchRemoteImageEnable', true),
         ];
     }
 }

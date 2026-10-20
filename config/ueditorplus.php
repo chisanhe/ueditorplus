@@ -31,6 +31,18 @@ return [
      */
     'hashFilename' => true,
 
+    // ==================== 编辑器基础配置 ====================
+
+    /**
+     * 编辑器默认高度
+     *
+     * 设置编辑器初始高度（像素）
+     * 可通过 $form->ueditorplus('field')->height(800) 方法覆盖此值
+     *
+     * @var int
+     */
+    'initialFrameHeight' => 400,
+
     // ==================== 图片上传配置 ====================
 
     /**
@@ -256,6 +268,54 @@ return [
      * @var string
      */
     'catcherPathFormat' => '/ueditorplus/catcher/{yyyy}{mm}{dd}/{time}{rand:6}',
+
+    /**
+     * 单个远程图片的下载超时时间（秒）
+     *
+     * 网络较慢或图片较大时可适当调大
+     *
+     * @var int
+     */
+    'catcherTimeout' => 30,
+
+    /**
+     * 单次请求最多抓取的图片数量
+     *
+     * 防止一次粘贴过多外部图片导致请求超时，0 表示不限制
+     *
+     * @var int
+     */
+    'catcherMaxCount' => 50,
+
+    /**
+     * 下载远程图片时使用的 User-Agent
+     *
+     * 部分图片服务器（如微信公众号、CDN）会拦截空 UA 或脚本 UA
+     *
+     * @var string
+     */
+    'catcherUserAgent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+
+    /**
+     * 下载远程图片时使用的 Referer 策略
+     *
+     * auto: 使用图片所在站点的根地址（推荐，可绕过多数防盗链）
+     * none: 不发送 Referer
+     * 其他字符串: 原样作为 Referer 发送
+     *
+     * @var string
+     */
+    'catcherReferer' => 'auto',
+
+    /**
+     * 下载远程图片时是否校验 SSL 证书
+     *
+     * 服务器未正确配置 CA 证书（openssl.cafile）时可临时关闭；
+     * 正常环境请保持 true
+     *
+     * @var bool
+     */
+    'catcherVerifySsl' => true,
 
     // ==================== 图片管理器配置 ====================
 

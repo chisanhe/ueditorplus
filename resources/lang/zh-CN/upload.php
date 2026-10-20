@@ -29,4 +29,9 @@ return [
     'ERROR_SIZE_EXCEED' => '文件大小超出限制',
     'ERROR_TYPE_NOT_ALLOWED' => '文件类型不允许上传',
     'ERROR_HTTP_LINK' => '不是有效的 HTTP(S) 链接',
+    'ERROR_FETCH' => '远程图片下载失败',
+    'ERROR_EMPTY_FILE' => '远程图片内容为空',
+    'ERROR_NOT_IMAGE' => '远程资源不是有效的图片',
+    'ERROR_WRITE' => '文件写入磁盘失败',
+    'ERROR_TIMEOUT' => '远程图片下载超时',
 ];

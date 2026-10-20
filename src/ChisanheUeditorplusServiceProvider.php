@@ -96,7 +96,13 @@ class ChisanheUeditorplusServiceProvider extends BaseServiceProvider
         $this->loadViewsFrom($this->resourcePath('views'), $this->getName());
 
         // 加载语言包
+        // 同时注册两个命名空间：扩展全名（chisanhe.ueditorplus）与短名（ueditorplus），
+        // 保证 trans('ueditorplus::upload.xxx') 与 trans('chisanhe.ueditorplus::upload.xxx') 都可用
         $this->loadTranslationsFrom($this->resourcePath('lang'), $this->getName());
+        $this->loadTranslationsFrom($this->resourcePath('lang'), 'ueditorplus');
+
+        // 视图同样兼容短命名空间
+        $this->loadViewsFrom($this->resourcePath('views'), 'ueditorplus');
 
         // 注册路由
         $this->app->booted(function () {

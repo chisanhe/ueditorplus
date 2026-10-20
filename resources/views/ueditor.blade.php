@@ -40,4 +40,8 @@
 {{-- 设置 UEditor 资源路径（在 DOM 中同步执行，早于所有外部 JS） --}}
 <script>
     window.UEDITOR_HOME_URL = '{{ $homeUrl }}';
+    // 关键：在 UEditor JS 加载之前覆盖 serverUrl，防止它用旧配置发 config 请求
+    if (typeof UEEDITOR_CONFIG !== 'undefined') {
+        UEEDITOR_CONFIG.serverUrl = '{{ $serverUrl }}';
+    }
 </script>

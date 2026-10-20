@@ -168,9 +168,27 @@ $form->ueditorplus('content', '内容')
     ->disableRemoteImageFetch();
 ```
 
-**手动抓取：** 点击编辑器工具栏中的「远程图片」按钮（由 UEditor 内置提供），可手动选择并抓取页面中的远程图片。
+**抓取相关配置（config/ueditorplus.php）：**
 
-> **提示：** 抓图接口地址为 `/admin/ueditor?action=catchimage`，确保该接口在 `routes.php` 中已注册且服务器可正常请求外部图片 URL。`.env` 中 `APP_URL` 必须填写正确的网站地址，否则图片可能下载失败。
+```php
+// 单个远程图片的下载超时时间（秒）
+'catcherTimeout'    => 30,
+// 单次请求最多抓取的图片数量，0 表示不限制
+'catcherMaxCount'   => 50,
+// 下载时使用的 UA，部分图床/CDN 会拦截脚本 UA
+'catcherUserAgent'  => 'Mozilla/5.0 ...',
+// Referer 策略：auto（图片所在站点根地址）/ none / 自定义字符串
+'catcherReferer'    => 'auto',
+// 是否校验 SSL 证书，服务器未配置 CA 证书时可临时关闭
+'catcherVerifySsl'  => true,
+// 允许抓取的文件类型与大小限制
+'catcherAllowFiles' => ['.png', '.jpg', '.jpeg', '.gif', '.bmp'],
+'catcherMaxSize'    => 2048000,
+```
+
+**实现方式说明：** UEditorPlus 自带 `catchremoteimage` 插件，本扩展默认将其关闭，改由自带的批量抓取逻辑处理（一次请求抓取全部图片、带提示、完成后同步回表单值），避免两者重复请求、图片被替换成 loading 占位图后无法恢复。
+
+> **提示：** 抓图接口地址为 `/{admin 前缀}/ueditorplus/serve?action=catchimage`，需要服务器可正常访问外网（PHP 需启用 curl 或开启 `allow_url_fopen`）。抓取失败时会把具体原因写入 `laravel.log`，便于排查（如证书、超时、防盗链、非图片响应等）。
 
 ### 同时启用多个编辑器
 

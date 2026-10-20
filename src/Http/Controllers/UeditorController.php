@@ -64,11 +64,11 @@ class UeditorController extends Controller
             case 'uploadvideo':
             // 上传文件
             case 'uploadfile':
-                return $this->storage()->upload($request);
+                return $this->storage($request)->upload($request);
 
             // 抓取远程图片
             case 'catchimage':
-                return $this->storage()->fetch($request);
+                return $this->storage($request)->fetch($request);
 
             // 获取图片列表
             case 'listimage':
@@ -119,7 +119,7 @@ class UeditorController extends Controller
         
         // 获取文件列表
         return response()->json(
-            $this->storage()->listFiles(
+            $this->storage($request)->listFiles(
                 $config['imageManagerListPath'],
                 $start,
                 $size,
@@ -147,7 +147,7 @@ class UeditorController extends Controller
         
         // 获取文件列表
         return response()->json(
-            $this->storage()->listFiles(
+            $this->storage($request)->listFiles(
                 $config['fileManagerListPath'],
                 $start,
                 $size,
@@ -163,15 +163,28 @@ class UeditorController extends Controller
      * 
      * @return LocalStorage
      */
-    protected function storage()
+    protected function storage(Request $request = null)
     {
         if ($this->storage === null) {
             // 获取磁盘配置，优先使用扩展配置，否则使用 Dcat Admin 配置
-            $disk = \Chisanhe\Ueditorplus\UeditorPlus::getUploadConfig('disk', 'public');
+            $disk = \Chisanhe\Ueditorplus\UeditorPlus::getUploadConfig('disk');
             
             // 如果未配置磁盘，尝试从 Dcat Admin 获取
-            if (empty($disk) && function_exists('config')) {
+            if (empty($disk)) {
                 $disk = config('admin.upload.disk', 'public');
+            }
+
+            // 允许请求通过 disk 参数覆盖（前端 serverparam 会带上当前磁盘），
+            // 仅接受真实存在的磁盘，避免被随意切换
+            if ($request) {
+                $requested = $request->get('disk');
+                if (is_string($requested) && $requested !== '' && config('filesystems.disks.' . $requested)) {
+                    $disk = $requested;
+                }
+            }
+
+            if (empty($disk) || !config('filesystems.disks.' . $disk)) {
+                $disk = 'public';
             }
             
             // 创建存储实例
