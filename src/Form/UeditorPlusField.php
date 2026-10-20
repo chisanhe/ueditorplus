@@ -460,6 +460,7 @@ class UeditorPlusField extends Field
         $serverUrlJS = json_encode($serverUrl);
         $loadConfigFromServerJS = $loadConfigFromServer ? 'true' : 'false';
         $diskJS = json_encode((string) $disk);
+        $csrfTokenJS = json_encode($csrfToken);
 
         // 生成初始化脚本（heredoc 直接赋值，所有 PHP 变量用拼接注入）
         $this->script = <<<JS
@@ -494,6 +495,24 @@ class UeditorPlusField extends Field
     function hideProgress() {
         if (typeof Dcat !== 'undefined' && Dcat.NP && Dcat.NP.done) { Dcat.NP.done(); }
     }
+    function getCsrfToken() {
+        var token = '';
+        try {
+            var meta = document.querySelector('meta[name="csrf-token"]');
+            if (meta) { token = meta.getAttribute('content') || ''; }
+        } catch (e1) {}
+        if (!token) {
+            try {
+                var input = document.querySelector('input[name=_token]');
+                if (input) { token = input.value || ''; }
+            } catch (e2) {}
+        }
+        if (!token && typeof Dcat !== 'undefined' && Dcat.token) { token = Dcat.token; }
+        if (!token && typeof LA !== 'undefined' && LA.token) { token = LA.token; }
+        // 最后兜底：使用服务端渲染时注入的 token
+        if (!token) { token = {$csrfTokenJS}; }
+        return token || '';
+    }
     function isRemoteSrc(src) {
         if (!src || src.indexOf('http') !== 0) { return false; }
         try {
@@ -525,8 +544,7 @@ class UeditorPlusField extends Field
         if (!serverUrl) return;
         showToast('\u68c0\u6d4b\u5230 ' + total + ' \u5f20\u5916\u90e8\u56fe\u7247\u6b63\u5728\u62d3\u53d6\u672c\u5730\u5316...', 'info');
         showProgress();
-        var tokenInput = document.querySelector('input[name=_token]');
-        var csrfToken = tokenInput ? tokenInput.value : '';
+        var csrfToken = getCsrfToken();
         var disk = {$diskJS};
         var xhr = new XMLHttpRequest();
         var separator = serverUrl.indexOf('?') === -1 ? '?' : '&';
@@ -534,6 +552,8 @@ class UeditorPlusField extends Field
         xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
         if (csrfToken) { xhr.setRequestHeader('X-CSRF-TOKEN', csrfToken); }
         var fd = new FormData();
+        // 同时放入表单字段，兼容只读取 _token 输入的场景（如自定义上传接口）
+        if (csrfToken) { fd.append('_token', csrfToken); }
         for (var j = 0; j < remoteSrcs.length; j++) {
             fd.append('source[]', remoteSrcs[j].src);
         }
@@ -560,6 +580,10 @@ class UeditorPlusField extends Field
                         }
                     } else { failed = total; }
                 } catch (e) { failed = total; }
+            } else if (xhr.status === 419) {
+                // CSRF token 失效或缺失
+                showToast('\u9875\u9762\u5df2\u8fc7\u671f\uff08CSRF token \u5931\u6548\uff09\uff0c\u8bf7\u5237\u65b0\u9875\u9762\u540e\u91cd\u8bd5', 'error');
+                return;
             } else { failed = total; }
             if (fetched > 0) {
                 // 关键：把本地化后的内容同步回隐藏域，否则提交表单时保存的还是外链地址

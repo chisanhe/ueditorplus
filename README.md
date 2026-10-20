@@ -190,6 +190,8 @@ $form->ueditorplus('content', '内容')
 
 > **提示：** 抓图接口地址为 `/{admin 前缀}/ueditorplus/serve?action=catchimage`，需要服务器可正常访问外网（PHP 需启用 curl 或开启 `allow_url_fopen`）。抓取失败时会把具体原因写入 `laravel.log`，便于排查（如证书、超时、防盗链、非图片响应等）。
 
+> **CSRF：** 抓图请求会自动携带 CSRF token（依次从 `meta[name=csrf-token]`、`input[name=_token]`、`Dcat.token` 获取，最后使用服务端注入的值），并在请求头 `X-CSRF-TOKEN` 与表单字段 `_token` 中同时传递。若自定义 `server()` 接口，请确保该路由使用 `web` 中间件组并放行 CSRF 校验，否则会返回 `419 CSRF token mismatch`。
+
 ### 同时启用多个编辑器
 
 ```php
