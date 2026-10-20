@@ -462,11 +462,19 @@ class UeditorPlusField extends Field
         $diskJS = json_encode((string) $disk);
         $csrfTokenJS = json_encode($csrfToken);
 
+        // 本地域名白名单：这些域名下的图片不会被抓取
+        $localDomains = \Chisanhe\Ueditorplus\UeditorPlus::getUploadConfig(
+            'catcherLocalDomain',
+            array('127.0.0.1', 'localhost')
+        );
+        $localDomainsJS = json_encode(array_values(array_filter((array) $localDomains, 'is_scalar')));
+
         // 生成初始化脚本（heredoc 直接赋值，所有 PHP 变量用拼接注入）
         $this->script = <<<JS
 (function () {
     var storedValue = {$contentJson};
     var remoteImageEnable = {$remoteImageEnableJS};
+    var localDomains = {$localDomainsJS};
     if (typeof UEEDITOR_CONFIG !== 'undefined') {
         UEEDITOR_CONFIG.serverUrl = {$serverUrlJS};
         UEEDITOR_CONFIG.loadConfigFromServer = {$loadConfigFromServerJS};
@@ -515,13 +523,27 @@ class UeditorPlusField extends Field
     }
     function isRemoteSrc(src) {
         if (!src || src.indexOf('http') !== 0) { return false; }
+        var host = '';
+        var hostname = '';
         try {
             var a = document.createElement('a');
             a.href = src;
-            return !!a.host && a.host !== window.location.host;
+            host = a.host || '';
+            hostname = a.hostname || '';
         } catch (e) {
             return src.indexOf(window.location.host) === -1;
         }
+        if (!host || host === window.location.host) { return false; }
+        // 命中所配置的本地域名（如自有 CDN、图床）时不抓取
+        for (var i = 0; i < localDomains.length; i++) {
+            var d = String(localDomains[i] || '').toLowerCase();
+            if (!d) { continue; }
+            // 精确匹配，或匹配其子域名（如 img.baidu.com 命中 baidu.com）
+            if (hostname === d || hostname.lastIndexOf('.' + d) === hostname.length - d.length - 1) {
+                return false;
+            }
+        }
+        return true;
     }
     function fetchAndReplaceRemoteImages(editor, action) {
         var body = editor.body || editor.document.body;
