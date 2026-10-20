@@ -415,6 +415,70 @@ class UeditorPlusField extends Field
      * 
      * 生成初始化编辑器的 JavaScript 代码
      */
+    /**
+     * 计算本地域名白名单
+     *
+     * 这些域名下的图片视为「已是本地图片」，不会被重复抓取。
+     * 除配置中的 catcherLocalDomain 外，还会自动加入：
+     * - 当前访问域名
+     * - config('app.url') 的域名（保存图片时拼接的域名）
+     * - 当前磁盘 URL 的域名（磁盘 url 与 APP_URL 不一致时，很容易被误判成外链）
+     * - 各类 UrlPrefix（CDN）的域名
+     *
+     * @param string $disk 磁盘名称
+     * @return array
+     */
+    protected function localDomains($disk)
+    {
+        $domains = (array) \Chisanhe\Ueditorplus\UeditorPlus::getUploadConfig(
+            'catcherLocalDomain',
+            array('127.0.0.1', 'localhost')
+        );
+
+        // 当前访问域名
+        try {
+            if (function_exists('request')) {
+                $domains[] = request()->getHost();
+            }
+        } catch (\Exception $e) {
+            // 忽略，仅降级为不含当前域名
+        }
+
+        // 站点配置域名与 CDN 前缀域名
+        $candidates = array((string) config('app.url', ''));
+
+        foreach (array('imageUrlPrefix', 'videoUrlPrefix', 'fileUrlPrefix', 'catcherUrlPrefix') as $key) {
+            $candidates[] = (string) \Chisanhe\Ueditorplus\UeditorPlus::getUploadConfig($key, '');
+        }
+
+        // 当前磁盘生成的 URL（如 http://localhost/storage）
+        try {
+            $candidates[] = \Chisanhe\Ueditorplus\Storage\LocalStorage::make($disk)->getUrl('');
+        } catch (\Exception $e) {
+            // 磁盘不可用时忽略
+        }
+
+        foreach ($candidates as $url) {
+            if ($url === '') {
+                continue;
+            }
+
+            $host = parse_url($url, PHP_URL_HOST);
+
+            if (!empty($host)) {
+                $domains[] = $host;
+            }
+        }
+
+        $domains = array_map(function ($domain) {
+            return is_string($domain) ? strtolower(trim($domain)) : '';
+        }, $domains);
+
+        $domains = array_values(array_unique(array_filter($domains)));
+
+        return $domains;
+    }
+
     protected function setupScript()
     {
         // 生成唯一 ID
@@ -463,11 +527,7 @@ class UeditorPlusField extends Field
         $csrfTokenJS = json_encode($csrfToken);
 
         // 本地域名白名单：这些域名下的图片不会被抓取
-        $localDomains = \Chisanhe\Ueditorplus\UeditorPlus::getUploadConfig(
-            'catcherLocalDomain',
-            array('127.0.0.1', 'localhost')
-        );
-        $localDomainsJS = json_encode(array_values(array_filter((array) $localDomains, 'is_scalar')));
+        $localDomainsJS = json_encode($this->localDomains($disk));
 
         // 生成初始化脚本（heredoc 直接赋值，所有 PHP 变量用拼接注入）
         $this->script = <<<JS
@@ -481,6 +541,8 @@ class UeditorPlusField extends Field
         UEEDITOR_CONFIG.catchRemoteImageEnable = remoteImageEnable;
     }
     var fetchTimer_{$id} = null;
+    // 本次页面已尝试抓取过的图片地址：避免同一张图被反复抓取、反复弹提示
+    var triedUrls = {};
     function showToast(message, type) {
         type = type || 'success';
         if (typeof Dcat !== 'undefined' && Dcat.notify) {
@@ -533,8 +595,12 @@ class UeditorPlusField extends Field
         } catch (e) {
             return src.indexOf(window.location.host) === -1;
         }
-        if (!host || host === window.location.host) { return false; }
-        // 命中所配置的本地域名（如自有 CDN、图床）时不抓取
+        // 与当前站点同域名（忽略端口差异）时不抓取
+        if (!host || host === window.location.host || hostname === window.location.hostname) { return false; }
+        // 命中本地域名白名单（当前站点、APP_URL、磁盘 URL、CDN 等）时不抓取，
+        // 避免保存时使用的域名与后台访问域名不一致导致重复抓取
+        if (localDomains.indexOf(hostname) !== -1) { return false; }
+        // 兼容子域名，如 img.example.com 命中 example.com
         for (var i = 0; i < localDomains.length; i++) {
             var d = String(localDomains[i] || '').toLowerCase();
             if (!d) { continue; }
@@ -553,7 +619,8 @@ class UeditorPlusField extends Field
         var imgs = body.querySelectorAll('img');
         for (var i = 0; i < imgs.length; i++) {
             var src = imgs[i].src || imgs[i].getAttribute('src') || '';
-            if (isRemoteSrc(src) && !seen[src]) {
+            // 已是本地图片、本次已抓取过的图片都不再处理：没有外链时不会发起请求、不会弹提示
+            if (isRemoteSrc(src) && !seen[src] && !triedUrls[src]) {
                 seen[src] = true;
                 remoteSrcs.push({ el: imgs[i], src: src });
             }
@@ -578,6 +645,8 @@ class UeditorPlusField extends Field
         if (csrfToken) { fd.append('_token', csrfToken); }
         for (var j = 0; j < remoteSrcs.length; j++) {
             fd.append('source[]', remoteSrcs[j].src);
+            // 标记已尝试（抓取失败也不再重复请求，避免反复弹提示）
+            triedUrls[remoteSrcs[j].src] = true;
         }
         xhr.onload = function () {
             hideProgress();
