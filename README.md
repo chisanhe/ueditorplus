@@ -8,9 +8,14 @@ Dcat Admin 的 UEditor Plus 富文本编辑器扩展，支持 135 编辑器、�
 
 | 依赖 | 支持版本 |
 |------|----------|
-| PHP | 7.1 ~ 8.4（即 `<8.5`） |
-| Laravel | 5.8 ~ 13.x |
-| Dcat Admin | >= 2.0（命名空间 `Dcat\Admin\`，官方版与 printnow 版均兼容） |
+| PHP | 8.1 ~ 8.4（即 `<8.5`） |
+| Laravel | 10 ~ 13.x |
+| Dcat Admin | `printnow/laravel-admin` ^2.4（`Dcat\Admin\` 命名空间，与官方版 API 一致） |
+
+> **Laravel 9 及以下**：请继续使用 `chisanhe/ueditorplus` **v1.0.4**（依赖官方 `dcat/laravel-admin`，需将根项目 `minimum-stability` 设为 `dev`）。
+> 官方 `dcat/laravel-admin` 的所有发布版本都是 `-beta`，且尚不支持 Laravel 13；
+> 本包从 v1.2.0 起改用社区维护版 [printnow/laravel-admin](https://github.com/PrintNow/dcat-admin)（正式稳定发布，支持 Laravel 10 ~ 13），
+> 因此 `composer require` 无需任何 `minimum-stability` 配置即可完成安装。
 
 ## 安装
 
@@ -23,30 +28,14 @@ php artisan vendor:publish --provider="Chisanhe\Ueditorplus\ChisanheUeditorplusS
 
 资源发布到 `public/vendor/chisanhe/ueditorplus/`，配置发布到 `config/ueditorplus.php`（**以发布后的配置为准**，包内配置仅作为默认值）。
 
-### Dcat Admin 版本选择
+### 关于 Dcat Admin 依赖
 
-本包只使用 `Dcat\Admin\` 命名空间下的 API，官方版与社区维护版（printnow）均兼容。
+本包通过 `replace` 声明兼容官方 `dcat/laravel-admin`，因此：
 
-| Laravel | 建议的 Dcat Admin | 说明 |
-|---------|-------------------|------|
-| 5.8 ~ 10 | `dcat/laravel-admin`（官方 `^2.0@beta`） | 默认即可，Composer 自动安装 |
-| 11 ~ 12 | `dcat/laravel-admin`（`2.0.x-dev` 分支） | 本包已声明该约束，Composer 会自动回溯 |
-| 13 | `printnow/laravel-admin` | 官方版尚未支持 Laravel 13，需按下述方式替换 |
+- 项目里**已有** `dcat/laravel-admin` 也能直接安装本包，Composer 会自动改用 `printnow/laravel-admin`，不会出现两个包同时提供 `Dcat\Admin\` 命名空间导致类冲突的问题；
+- 本包只使用 `Dcat\Admin\` 下的 `Admin`、`Form`、`Form\Field`、`Extend\ServiceProvider` 等 API，两个版本行为一致，无需改动业务代码。
 
-**Laravel 13 使用 printnow 版**：在项目根目录 `composer.json` 中替换依赖（`replace` 掉官方包，避免两个包同时提供 `Dcat\Admin\` 命名空间）：
-
-```json
-{
-    "require": {
-        "printnow/laravel-admin": "^2.4"
-    },
-    "replace": {
-        "dcat/laravel-admin": "2.2.99"
-    }
-}
-```
-
-然后执行 `composer update` 即可。printnow 版要求 **PHP >= 8.1**，支持 Laravel 10 ~ 13 与 PHP 8.5。
+如果你希望继续使用官方 `dcat/laravel-admin`（仅支持 Laravel ≤ 12），需自行在根 `composer.json` 中把 `printnow/laravel-admin` 换成 `dcat/laravel-admin:^2.0@dev`，并设置 `minimum-stability: dev`。
 
 ## 使用
 
