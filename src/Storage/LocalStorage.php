@@ -783,8 +783,28 @@ class LocalStorage implements StorageInterface
      */
     protected function store(UploadedFile $file, $filename)
     {
-        // 使用文件系统的 put 方法保存文件
-        return $this->disk->put($this->normalizePath($filename), fopen($file->getRealPath(), 'r+'));
+        // getRealPath() 在上传文件校验失败时可能返回 false，
+        // 直接传给 fopen() 会抛 TypeError（PHP 8 起），这里先做保护
+        $realPath = $file->getRealPath();
+
+        if (!is_string($realPath) || $realPath === '' || !is_readable($realPath)) {
+            return false;
+        }
+
+        $resource = @fopen($realPath, 'rb');
+
+        if ($resource === false) {
+            return false;
+        }
+
+        try {
+            // 使用文件系统的 put 方法保存文件
+            return $this->disk->put($this->normalizePath($filename), $resource);
+        } finally {
+            if (is_resource($resource)) {
+                fclose($resource);
+            }
+        }
     }
 
     /**
@@ -1046,8 +1066,9 @@ class LocalStorage implements StorageInterface
 
         // 处理随机数变量 {rand:n}
         if (preg_match('/\{rand:(\d+)\}/i', $path, $matches)) {
-            $length = min((int) $matches[1], strlen(PHP_INT_MAX));
-            $rand = str_pad(mt_rand(0, pow(10, $length) - 1), $length, '0', STR_PAD_LEFT);
+            // 上限取 18 位：pow(10, 19) 已超过 PHP_INT_MAX，会导致 mt_rand 抛 ValueError
+            $length = min((int) $matches[1], 18);
+            $rand = str_pad(mt_rand(0, (int) pow(10, $length) - 1), $length, '0', STR_PAD_LEFT);
             $path = preg_replace('/\{rand:\d+\}/i', $rand, $path);
         }
 

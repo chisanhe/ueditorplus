@@ -6,9 +6,11 @@ Dcat Admin 的 UEditor Plus 富文本编辑器扩展，支持 135 编辑器、�
 
 ## 环境要求
 
-- PHP 7.0 ~ 8.3
-- Laravel 5.8 ~ 11.x
-- Dcat Admin >= 2.0
+| 依赖 | 支持版本 |
+|------|----------|
+| PHP | 7.1 ~ 8.4（即 `<8.5`） |
+| Laravel | 5.8 ~ 13.x |
+| Dcat Admin | >= 2.0（命名空间 `Dcat\Admin\`，官方版与 printnow 版均兼容） |
 
 ## 安装
 
@@ -20,6 +22,31 @@ php artisan vendor:publish --provider="Chisanhe\Ueditorplus\ChisanheUeditorplusS
 ```
 
 资源发布到 `public/vendor/chisanhe/ueditorplus/`，配置发布到 `config/ueditorplus.php`（**以发布后的配置为准**，包内配置仅作为默认值）。
+
+### Dcat Admin 版本选择
+
+本包只使用 `Dcat\Admin\` 命名空间下的 API，官方版与社区维护版（printnow）均兼容。
+
+| Laravel | 建议的 Dcat Admin | 说明 |
+|---------|-------------------|------|
+| 5.8 ~ 10 | `dcat/laravel-admin`（官方 `^2.0@beta`） | 默认即可，Composer 自动安装 |
+| 11 ~ 12 | `dcat/laravel-admin`（`2.0.x-dev` 分支） | 本包已声明该约束，Composer 会自动回溯 |
+| 13 | `printnow/laravel-admin` | 官方版尚未支持 Laravel 13，需按下述方式替换 |
+
+**Laravel 13 使用 printnow 版**：在项目根目录 `composer.json` 中替换依赖（`replace` 掉官方包，避免两个包同时提供 `Dcat\Admin\` 命名空间）：
+
+```json
+{
+    "require": {
+        "printnow/laravel-admin": "^2.4"
+    },
+    "replace": {
+        "dcat/laravel-admin": "2.2.99"
+    }
+}
+```
+
+然后执行 `composer update` 即可。printnow 版要求 **PHP >= 8.1**，支持 Laravel 10 ~ 13 与 PHP 8.5。
 
 ## 使用
 
@@ -68,6 +95,35 @@ class ArticleController extends AdminController
 | `->aiConfig([...])` | AI 配置 |
 | `->wordCount(true, 100000)` | 字数统计 |
 | `->server('/ueditorplus/serve')` | 自定义后端接口地址 |
+
+### 编辑器高度
+
+编辑器高度支持三种设置方式，**优先级从高到低**：
+
+| 优先级 | 设置方式 | 说明 |
+|--------|----------|------|
+| 1 | `->height(600)` | 表单字段级设置，只影响当前字段 |
+| 2 | `config/ueditorplus.php` 的 `initialFrameHeight` | 全局默认值，默认 `400` |
+| 3 | UEditor 内置默认值 | `ueditor.config.js` 中的 `minFrameHeight` |
+
+```php
+// 方式 1：单个字段设置（推荐）
+$form->ueditorplus('content', '文章内容')->height(600);
+```
+
+```php
+// 方式 2：全局默认（config/ueditorplus.php）
+'initialFrameHeight' => 400,
+```
+
+> **说明**
+> UEditor 内部有自动高度（auto height）逻辑，会按内容重新计算容器高度，
+> 常常把配置值覆盖成一个很小的数值。本包在 `height()` 中同时设置了
+> `initialFrameHeight` 与 `minFrameHeight`，并在编辑器 `ready` 之后
+> 强制写回容器高度，确保配置值稳定生效。
+> 若修改后仍未生效，请确认已执行
+> `php artisan vendor:publish --tag=chisanhe.ueditorplus --force`
+> 重新发布配置文件（包内配置仅为默认值）。
 
 ## 配置
 

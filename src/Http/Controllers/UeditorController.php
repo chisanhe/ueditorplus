@@ -163,7 +163,7 @@ class UeditorController extends Controller
      * 
      * @return LocalStorage
      */
-    protected function storage(Request $request = null)
+    protected function storage(?Request $request = null)
     {
         if ($this->storage === null) {
             // 获取磁盘配置，优先使用扩展配置，否则使用 Dcat Admin 配置
