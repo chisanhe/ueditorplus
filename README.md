@@ -106,13 +106,25 @@ $form->ueditorplus('content', '文章内容')->height(600);
 ```
 
 > **说明**
-> UEditor 内部有自动高度（auto height）逻辑，会按内容重新计算容器高度，
-> 常常把配置值覆盖成一个很小的数值。本包在 `height()` 中同时设置了
-> `initialFrameHeight` 与 `minFrameHeight`，并在编辑器 `ready` 之后
-> 强制写回容器高度，确保配置值稳定生效。
+>
+> UEditor 的 `render()` 在拿不到 `initialFrameHeight` 时，会退化成使用容器的自然高度
+> （`options.initialFrameHeight = options.minFrameHeight = container.offsetHeight`），
+> 实测在普通表单里约 136~215px。此时在控制台执行
+> `UE.instants['ueditorInstant0'].getOpt('initialFrameHeight')` 看到的就是这个值，
+> 表现为**编辑器只有内容那么高，而不是设置的高度**。
+>
+> 本包（v1.2.1 起）的处理方式：
+>
+> 1. 高度值在 PHP 端统一算出（`->height()` > `config('ueditorplus.initialFrameHeight')` > 400），
+>    并直接写入编辑器实例的 `options`（`setOpt` 无法覆盖已存在的键，只能直接赋值）；
+> 2. 编辑器 `ready` 之后调用 `ue.setHeight(height)` 强制固定容器高度，
+>    写入初始内容后再固定一次（`setHeight` 会同时改写 `options.initialFrameHeight`）；
+> 3. 关闭 UEditor 的自动高度（`ueditor.config.js` 与运行时 `UEDITOR_CONFIG` 双重设置），
+>    避免 `autoheight` 插件按正文内容把编辑器重新压扁。
+>
 > 若修改后仍未生效，请确认已执行
 > `php artisan vendor:publish --tag=chisanhe.ueditorplus --force`
-> 重新发布配置文件（包内配置仅为默认值）。
+> 重新发布资源与配置文件（包内文件仅为默认值）。
 
 ## 配置
 

@@ -287,7 +287,10 @@
         maxInputCount: 1,
         
         // 是否自动高度
-        autoHeightEnabled: true,
+        // 关闭后 autoheight 插件不会在 ready 时启用，
+        // 编辑器高度由 initialFrameHeight 固定，
+        // 不会被按正文内容重新计算（正文为空时会被压成约 136px）。
+        autoHeightEnabled: false,
         
         // 编辑器最小高度
         minFrameHeight: 220,
@@ -302,7 +305,9 @@
         toolbarTopOffset: 0,
         
         // 是否启用远程图片抓取
-        catchRemoteImageEnable: true,
+        // 内置 catchremoteimage 插件与本扩展的抓图逻辑重复，统一由本扩展处理，
+        // 这里关闭，避免两边同时发请求。
+        catchRemoteImageEnable: false,
         
         // 自动排版配置
         autotypeset: {

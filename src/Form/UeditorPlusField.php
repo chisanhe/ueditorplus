@@ -31,8 +31,6 @@ class UeditorPlusField extends Field
      * @var array
      */
     protected $options = [
-        // 编辑器默认高度
-        'initialFrameHeight' => 400,
         // 编辑器最大字数
         'maximumWords' => 100000,
         // 服务器上传接口
@@ -99,11 +97,10 @@ class UeditorPlusField extends Field
     public function height($height)
     {
         $height = (int) $height;
+
+        // 仅记录期望高度，实际生效高度在 setupScript() 中统一计算：
+        // ->height() > config('ueditorplus.initialFrameHeight') > 400
         $this->options['initialFrameHeight'] = $height;
-        // 同时设置 minFrameHeight，防止 UEditor 内部 auto-height 逻辑覆盖 initialFrameHeight
-        $this->options['minFrameHeight'] = $height;
-        // 关闭自动高度模式，让 initialFrameHeight 固定生效
-        $this->options['autoHeightEnabled'] = false;
 
         return $this;
     }
@@ -491,12 +488,15 @@ class UeditorPlusField extends Field
         // 强制关闭自动高度，确保 initialFrameHeight 生效（在 formatOptions 之前设置）
         $this->options['autoHeightEnabled'] = false;
 
-        // 从配置文件读取 initialFrameHeight 默认值（如果未通过 ->height() 设置）
-        $configHeight = (int) config('ueditorplus.initialFrameHeight', 400);
-        if (!isset($this->options['initialFrameHeight'])) {
-            $this->options['initialFrameHeight'] = $configHeight;
-            $this->options['minFrameHeight'] = $configHeight;
+        // 编辑器高度取值优先级：->height() 显式指定 > 配置文件 > 默认 400
+        // 注意：类属性 $options 中不预置 initialFrameHeight，
+        // 这样才能区分“用户显式调用了 ->height()”与“使用配置文件的默认值”
+        $height = (int) ($this->options['initialFrameHeight'] ?? config('ueditorplus.initialFrameHeight', 400));
+        if ($height <= 0) {
+            $height = 400;
         }
+        $this->options['initialFrameHeight'] = $height;
+        $this->options['minFrameHeight'] = $height;
 
         // 格式化配置
         $opts = $this->formatOptions();
@@ -525,6 +525,7 @@ class UeditorPlusField extends Field
         $loadConfigFromServerJS = $loadConfigFromServer ? 'true' : 'false';
         $diskJS = json_encode((string) $disk);
         $csrfTokenJS = json_encode($csrfToken);
+        $heightJS = json_encode($height);
 
         // 本地域名白名单：这些域名下的图片不会被抓取
         $localDomainsJS = json_encode($this->localDomains($disk));
@@ -538,7 +539,13 @@ class UeditorPlusField extends Field
     if (typeof UEEDITOR_CONFIG !== 'undefined') {
         UEEDITOR_CONFIG.serverUrl = {$serverUrlJS};
         UEEDITOR_CONFIG.loadConfigFromServer = {$loadConfigFromServerJS};
-        UEEDITOR_CONFIG.catchRemoteImageEnable = remoteImageEnable;
+        // 双重保险：UEditor 的 autoheight 插件在 ready 时会启用，
+        // 按正文内容重新计算高度（body.style.height / iframe 容器高度），
+        // 把编辑器压扁。这里在全局配置里也关掉，
+        // 避免实例选项缺失时插件被意外启用。
+        UEDITOR_CONFIG.autoHeightEnabled = false;
+        // 内置 catchremoteimage 插件与本扩展的抓图逻辑重复，统一关闭
+        UEDITOR_CONFIG.catchRemoteImageEnable = false;
     }
     var fetchTimer_{$id} = null;
     // 本次页面已尝试抓取过的图片地址：避免同一张图被反复抓取、反复弹提示
@@ -690,17 +697,29 @@ class UeditorPlusField extends Field
         };
         xhr.send(fd);
     }
+    // 编辑器高度：以服务端算好的值为准
+    // UEditor 在 initialFrameHeight 缺失时，render() 会回退成容器的自然高度
+    // （实测约 136~215px），所以这里直接写死并同步到实例选项
+    var frameHeight = {$heightJS};
     var ue = UE.getEditor('{$id}', {$opts});
+    // 双保险：setOpt 无法覆盖已存在的键，这里直接写入选项
+    if (ue.options) {
+        ue.options.initialFrameHeight = frameHeight;
+        ue.options.minFrameHeight = frameHeight;
+        ue.options.autoHeightEnabled = false;
+    }
     ue.ready(function() {
-        // 强制设置编辑器容器高度（防止 UEditor 内部 auto-height 逻辑覆盖配置值）
-        var frameHeight = ue.options.initialFrameHeight || ue.options.minFrameHeight || 400;
-        ue.setHeight ? ue.setHeight(frameHeight) : null;
+        // 固定编辑器高度（setHeight 会直接改写 options.initialFrameHeight）
+        if (ue.disableAutoHeight) { ue.disableAutoHeight(); }
+        if (ue.setHeight) { ue.setHeight(frameHeight); }
         if (ue.body && ue.body.parentNode) {
             ue.body.parentNode.style.height = frameHeight + 'px';
         }
         if (storedValue) {
             ue.setContent(storedValue);
             jQuery('#{$id}-value').val(storedValue);
+            // setContent 会触发 contentchange，这里再固定一次高度
+            if (ue.setHeight) { ue.setHeight(frameHeight); }
             // 初始内容加载后立即检查并抓取远程图片
             if (remoteImageEnable) {
                 fetchAndReplaceRemoteImages(ue, 'init');
@@ -708,7 +727,7 @@ class UeditorPlusField extends Field
         }
         ue.execCommand('serverparam', '_token', '{$csrfToken}');
         ue.execCommand('serverparam', 'disk', '{$disk}');
-        ue.addListener('contentChange', function() {
+        ue.addListener('contentchange', function() {
             jQuery('#{$id}-value').val(ue.getContent());
             if (!remoteImageEnable) return;
             clearTimeout(fetchTimer_{$id});
