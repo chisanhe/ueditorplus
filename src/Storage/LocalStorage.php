@@ -286,8 +286,25 @@ class LocalStorage implements StorageInterface
             'filename' => '',
         );
 
-        // 请求远程资源
-        $response = $this->requestUrl($url, $options);
+        // 请求远程资源：按策略逐级重试，尽量兼容各类防盗链/证书异常的站点
+        // 1) 站点根 Referer + 浏览器 UA；2) 不带 Referer（Referer 校验误杀时）；
+        // 3) 不带 Referer + 忽略 SSL 证书（自签名/证书链不完整时）
+        $attempts = array(
+            array(),
+            array('referer_policy' => 'none'),
+            array('referer_policy' => 'none', 'verify_ssl' => false),
+        );
+
+        $response = array('ok' => false, 'content' => '', 'type' => '', 'error' => '');
+
+        foreach ($attempts as $attempt) {
+            $response = $this->requestUrl($url, array_merge($options, $attempt));
+
+            if ($response['ok']) {
+                break;
+            }
+        }
+
         if (!$response['ok']) {
             // 记录失败原因到日志，方便排查（30 秒内的重复错误不会刷屏）
             $this->logFetchError($url, $response['error']);
@@ -671,6 +688,11 @@ class LocalStorage implements StorageInterface
             if (strncmp($content, $sign, strlen($sign)) === 0) {
                 return true;
             }
+        }
+
+        // ISOBMFF 容器格式（avif / heic 等，第 5~8 字节为 "ftyp"）
+        if (strlen($content) > 11 && substr($content, 4, 4) === 'ftyp') {
+            return true;
         }
 
         return false;

@@ -654,8 +654,45 @@ class UeditorPlusField extends Field
         var failed = 0;
         var serverUrl = editor.getOpt('serverUrl') || '';
         if (!serverUrl) return;
-        showToast('\u68c0\u6d4b\u5230 ' + total + ' \u5f20\u5916\u90e8\u56fe\u7247\u6b63\u5728\u62d3\u53d6\u672c\u5730\u5316...', 'info');
-        showProgress();
+        // 提示与占位均在编辑器内呈现（与 UEditorPlus 内置上传提示一致），不再使用页面右上角通知
+        function editorTip(message, type) {
+            try {
+                editor.fireEvent('showmessage', { content: message, type: type || 'info', timeout: 4000 });
+            } catch (e) { showToast(message, type); }
+        }
+        function loadingSrc() {
+            try { return editor.options.themePath + editor.options.theme + '/images/spacer.gif'; }
+            catch (e) { return ''; }
+        }
+        function markLoading(img) {
+            if (!img.getAttribute('data-remote-src')) {
+                img.setAttribute('data-remote-src', img.src);
+            }
+            var src = loadingSrc();
+            if (src) { img.setAttribute('src', src); }
+            img.classList.add('uep-loading');
+            img.classList.remove('uep-loading-error');
+        }
+        function markSuccess(img, url) {
+            img.classList.remove('uep-loading');
+            img.classList.remove('uep-loading-error');
+            img.removeAttribute('data-remote-src');
+            img.setAttribute('src', url);
+            img.setAttribute('_src', url);
+            img.setAttribute('data-catch-result', '1');
+        }
+        function markFailed(img) {
+            // 失败：去掉 loading 态、恢复外链原图并标记错误样式，方便用户手动处理
+            img.classList.remove('uep-loading');
+            img.classList.add('uep-loading-error');
+            img.setAttribute('src', img.getAttribute('data-remote-src') || img.src);
+        }
+        function markAllFailed() {
+            for (var i = 0; i < remoteSrcs.length; i++) { markFailed(remoteSrcs[i].el); }
+        }
+        // 请求前先把外链图原地替换为编辑器内 loading 占位
+        for (var p = 0; p < remoteSrcs.length; p++) { markLoading(remoteSrcs[p].el); }
+        editorTip('检测到 ' + total + ' 张外部图片正在抓取本地化...', 'info');
         var csrfToken = getCsrfToken();
         var xsrfToken = getXsrfToken();
         var disk = {$diskJS};
@@ -675,7 +712,6 @@ class UeditorPlusField extends Field
             triedUrls[remoteSrcs[j].src] = true;
         }
         xhr.onload = function () {
-            hideProgress();
             if (xhr.status === 200) {
                 try {
                     var res = JSON.parse(xhr.responseText);
@@ -685,10 +721,7 @@ class UeditorPlusField extends Field
                             if (item.state === 'SUCCESS' && item.url && item.source) {
                                 for (var m = 0; m < remoteSrcs.length; m++) {
                                     if (remoteSrcs[m].src === item.source) {
-                                        remoteSrcs[m].el.src = item.url;
-                                        // UEditor 用 _src 记录原始地址，保持同步避免再次抓取
-                                        remoteSrcs[m].el.setAttribute('_src', item.url);
-                                        remoteSrcs[m].el.setAttribute('data-catch-result', '1');
+                                        markSuccess(remoteSrcs[m].el, item.url);
                                         fetched++;
                                         break;
                                     }
@@ -699,20 +732,23 @@ class UeditorPlusField extends Field
                 } catch (e) { failed = total; }
             } else if (xhr.status === 419) {
                 // CSRF token 失效或缺失
-                showToast('\u9875\u9762\u5df2\u8fc7\u671f\uff08CSRF token \u5931\u6548\uff09\uff0c\u8bf7\u5237\u65b0\u9875\u9762\u540e\u91cd\u8bd5', 'error');
+                markAllFailed();
+                try { jQuery('#{$id}-value').val(editor.getContent()); } catch (e5) {}
+                editorTip('页面已过期（CSRF token 失效），请刷新页面后重试', 'error');
                 return;
             } else { failed = total; }
-            if (fetched > 0) {
-                // 关键：把本地化后的内容同步回隐藏域，否则提交表单时保存的还是外链地址
-                try { jQuery('#{$id}-value').val(editor.getContent()); } catch (e3) {}
-            }
-            if (fetched === total) { showToast('\u8fdc\u7a0b\u56fe\u7247\u62d3\u53d6\u5b8c\u6210\u5171 ' + total + ' \u5f20', 'success'); }
-            else if (fetched > 0) { showToast('\u8fdc\u7a0b\u56fe\u7247\u62d3\u53d6\u5b8c\u6210\uff1a' + fetched + ' \u5f20\u6210\u529f\uff0c' + failed + ' \u5f20\u5931\u8d25', 'error'); }
-            else { showToast('\u8fdc\u7a0b\u56fe\u7247\u62d3\u53d6\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u670d\u52a1\u5668\u914d\u7f6e', 'error'); }
+            // 响应与请求条数不一致等异常情况，把剩余未处理的图恢复为失败态
+            if (fetched + failed < total) { markAllFailed(); failed = total - fetched; }
+            // 占位/错误标记都改了 DOM，这里统一同步回隐藏域
+            try { jQuery('#{$id}-value').val(editor.getContent()); } catch (e3) {}
+            if (fetched === total) { editorTip('远程图片抓取完成，共 ' + total + ' 张', 'success'); }
+            else if (fetched > 0) { editorTip('远程图片抓取完成：' + fetched + ' 张成功，' + failed + ' 张失败', 'error'); }
+            else { editorTip('远程图片抓取失败，请检查服务器网络配置', 'error'); }
         };
         xhr.onerror = function () {
-            hideProgress();
-            showToast('\u8fdc\u7a0b\u56fe\u7247\u62d3\u53d6\u8bf7\u6c42\u5931\u8d25', 'error');
+            markAllFailed();
+            try { jQuery('#{$id}-value').val(editor.getContent()); } catch (e4) {}
+            editorTip('远程图片抓取请求失败', 'error');
         };
         xhr.send(fd);
     }

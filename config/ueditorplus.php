@@ -74,7 +74,7 @@ return [
      * 
      * @var array
      */
-    'imageAllowFiles' => ['.png', '.jpg', '.jpeg', '.gif', '.bmp'],
+    'imageAllowFiles' => ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.avif'],
 
     /**
      * 图片访问路径前缀
@@ -256,7 +256,7 @@ return [
      * 
      * @var array
      */
-    'catcherAllowFiles' => ['.png', '.jpg', '.jpeg', '.gif', '.bmp'],
+    'catcherAllowFiles' => ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.avif'],
 
     /**
      * 抓取图片访问路径前缀
