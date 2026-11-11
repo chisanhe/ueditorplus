@@ -28,7 +28,15 @@
                 textarea 为空，内容通过 PHP json_encode → JS setContent() 设置。
                 原始内容存在 data-original-content 中（JSON 编码，不经过 HTML 解析）。
             --}}
-            <script id="{{$id}}" name="{{$name}}" type="text/plain"></script>
+            {{--
+                注意：script 容器不要带 name 属性。UEditor 渲染时会把容器的 name
+                赋给 editor.options.textarea，随后在原生 form submit 时创建一个
+                <textarea name="content">，与下方隐藏域同名。Dcat 用 AJAX 提交时
+                该 textarea 值长期过期，PHP 端同名参数后者覆盖前者，导致保存的
+                永远是旧内容（表现为抓图结果不落库、每次编辑重复抓取）。
+                字段值只通过下方隐藏域提交，由 JS 的 contentchange 事件同步。
+            --}}
+            <script id="{{$id}}" type="text/plain"></script>
             <input type="hidden" id="{{$id}}-value" name="{{$name}}" data-original-content="{{ $contentDataAttr }}">
         </div>
 

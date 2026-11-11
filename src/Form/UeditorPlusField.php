@@ -789,6 +789,11 @@ class UeditorPlusField extends Field
         ue.options.autoHeightEnabled = false;
     }
     ue.ready(function() {
+        // 禁用 UEditor 原生表单同步（sync）：它会在原生 form submit 时创建
+        // <textarea name="content">（与隐藏域同名），Dcat 的 AJAX 提交不会触发
+        // 原生 submit，导致该 textarea 长期过期；PHP 端同名参数后者覆盖前者，
+        // 保存的永远是旧内容。字段值只通过隐藏域提交，由 contentchange 同步
+        if (ue.options) { ue.options.textarea = null; }
         // 固定编辑器高度（setHeight 会直接改写 options.initialFrameHeight）
         if (ue.disableAutoHeight) { ue.disableAutoHeight(); }
         if (ue.setHeight) { ue.setHeight(frameHeight); }
