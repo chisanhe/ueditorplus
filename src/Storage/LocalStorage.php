@@ -45,14 +45,21 @@ class LocalStorage implements StorageInterface
 
     /**
      * Laravel Filesystem 实例
-     * 
+     *
      * @var Filesystem
      */
     protected $disk;
 
     /**
+     * 当前使用的磁盘名称（用于响应中返回，便于排查）
+     *
+     * @var string
+     */
+    protected $diskName = '';
+
+    /**
      * 构造函数
-     * 
+     *
      * @param Filesystem $disk Laravel 文件系统实例
      */
     public function __construct(Filesystem $disk)
@@ -97,6 +104,7 @@ class LocalStorage implements StorageInterface
         // 构建成功响应
         $response = [
             'state' => 'SUCCESS',
+            'disk' => $this->diskName,
             'url' => $this->getUrl($filename, Arr::get($config, 'url_prefix', '')),
             'title' => $filename,
             'original' => $file->getClientOriginalName(),
@@ -1280,11 +1288,15 @@ class LocalStorage implements StorageInterface
             $disk = 'public';
         }
 
-        // 获取磁盘实例
-        if (is_string($disk)) {
-            $disk = \Illuminate\Support\Facades\Storage::disk($disk);
-        }
+        // 记录磁盘名（用于响应中返回，便于确认磁盘切换是否生效）
+        $diskName = $disk;
 
-        return new static($disk);
+        // 获取磁盘实例
+        $filesystem = \Illuminate\Support\Facades\Storage::disk($disk);
+
+        $instance = new static($filesystem);
+        $instance->diskName = $diskName;
+
+        return $instance;
     }
 }

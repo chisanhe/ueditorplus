@@ -134,3 +134,5 @@ $this->app->bind(Chisanhe\Ueditorplus\Storage\StorageInterface::class, App\Stora
 **抓取返回 419**：会话过期，刷新页面即可；自定义 `->server()` 接口需放在 `web` 中间件组内。
 
 **图片保存了但访问 404**：`.env` 的 `APP_URL` 与实际域名一致，public 磁盘执行 `php artisan storage:link`。
+
+**`->disk('admin')` 后文件还在 `/storage/` 下**：插件正常使用了你指定的磁盘，但 Dcat 文档提供的 `admin` 磁盘默认与 `public` 磁盘指向同一目录（`storage/app/public`、url `/storage`），所以 URL 相同。想隔离请自定义磁盘的 `root` 与 `url`；若项目未定义该磁盘，会静默回退到默认磁盘。
