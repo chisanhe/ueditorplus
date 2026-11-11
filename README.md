@@ -58,7 +58,7 @@ $form->ueditorplus('content', '文章内容')
 | `disk` | `''` | 存储磁盘，留空取 Dcat Admin 的 `admin.upload.disk` |
 | `initialFrameHeight` | `400` | 编辑器初始高度（px） |
 | `hashFilename` | `true` | 上传文件是否使用 MD5 命名（建议开启） |
-| `imageMaxSize` / `videoMaxSize` / `fileMaxSize` | 2MB / 100MB / 50MB | 各类文件最大字节数 |
+| `imageMaxSize` / `videoMaxSize` / `fileMaxSize` | 10MB / 100MB / 50MB | 各类文件最大字节数（图片上传另受 PHP `upload_max_filesize` 限制） |
 | `imageAllowFiles` 等 | 见配置文件 | 允许上传的扩展名 |
 | `imagePathFormat` 等 | `/ueditorplus/image/{yyyy}{mm}{dd}/{time}{rand:6}` | 保存路径格式 |
 | `imageUrlPrefix` 等 | `''` | URL 前缀（CDN 域名），留空用磁盘自带 URL |

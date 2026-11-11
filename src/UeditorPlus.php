@@ -120,7 +120,7 @@ class UeditorPlus
             // 图片上传配置
             'imageActionName' => Arr::get($config, 'imageActionName', 'uploadimage'),
             'imageFieldName' => Arr::get($config, 'imageFieldName', 'upfile'),
-            'imageMaxSize' => Arr::get($config, 'imageMaxSize', 2048000),
+            'imageMaxSize' => Arr::get($config, 'imageMaxSize', 10485760),
             'imageAllowFiles' => Arr::get($config, 'imageAllowFiles', ['.png', '.jpg', '.jpeg', '.gif', '.bmp']),
             'imageUrlPrefix' => Arr::get($config, 'imageUrlPrefix', ''),
             'imagePathFormat' => Arr::get($config, 'imagePathFormat', '/ueditorplus/image/{yyyy}{mm}{dd}/{time}{rand:6}'),
@@ -153,7 +153,7 @@ class UeditorPlus
             // 远程图片抓取配置
             'catcherActionName' => Arr::get($config, 'catcherActionName', 'catchimage'),
             'catcherFieldName' => Arr::get($config, 'catcherFieldName', 'source'),
-            'catcherMaxSize' => Arr::get($config, 'catcherMaxSize', 2048000),
+            'catcherMaxSize' => Arr::get($config, 'catcherMaxSize', 10485760),
             'catcherAllowFiles' => Arr::get($config, 'catcherAllowFiles', ['.png', '.jpg', '.jpeg', '.gif', '.bmp']),
             'catcherUrlPrefix' => Arr::get($config, 'catcherUrlPrefix', ''),
             'catcherPathFormat' => Arr::get($config, 'catcherPathFormat', '/ueditorplus/catcher/{yyyy}{mm}{dd}/{time}{rand:6}'),

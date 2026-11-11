@@ -62,11 +62,12 @@ return [
     /**
      * 图片最大上传大小（单位：字节）
      * 
-     * 默认 2MB = 2048000 字节
+     * 默认 10MB = 10485760 字节（UEditor 原版默认值）
+     * 注意：上传仍受 PHP 的 upload_max_filesize / post_max_size 限制
      * 
      * @var int
      */
-    'imageMaxSize' => 2048000,
+    'imageMaxSize' => 10485760,
 
     /**
      * 允许上传的图片格式
@@ -244,9 +245,11 @@ return [
     /**
      * 抓取图片最大大小（单位：字节）
      * 
+     * 默认 10MB = 10485760 字节
+     * 
      * @var int
      */
-    'catcherMaxSize' => 2048000,
+    'catcherMaxSize' => 10485760,
 
     /**
      * 允许抓取的图片格式

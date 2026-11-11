@@ -1,0 +1,17 @@
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Composer
+/vendor/
+composer.lock
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 测试运行时
+.phpunit.result.cache
+.phpunit.cache/
