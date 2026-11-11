@@ -34,4 +34,6 @@ return [
     'ERROR_NOT_IMAGE' => 'Remote resource is not a valid image',
     'ERROR_WRITE' => 'Failed to save the file to disk',
     'ERROR_TIMEOUT' => 'Remote image fetch timed out',
+    'ERROR_HOST_FORBIDDEN' => 'Remote host is not allowed (private/reserved address)',
+    'ERROR_TOO_MANY_REQUESTS' => 'Too many requests, please try again later',
 ];

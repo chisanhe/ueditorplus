@@ -34,4 +34,6 @@ return [
     'ERROR_NOT_IMAGE' => '远程资源不是有效的图片',
     'ERROR_WRITE' => '文件写入磁盘失败',
     'ERROR_TIMEOUT' => '远程图片下载超时',
+    'ERROR_HOST_FORBIDDEN' => '远程地址不允许访问（内网/保留地址）',
+    'ERROR_TOO_MANY_REQUESTS' => '操作过于频繁，请稍后再试',
 ];

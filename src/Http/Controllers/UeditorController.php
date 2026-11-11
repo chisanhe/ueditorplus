@@ -52,6 +52,12 @@ class UeditorController extends Controller
         // 获取当前请求的 action
         $action = $request->get('action');
 
+        // 频率限制：上传与远程抓图接口按 IP + 用户做每分钟限流，
+        // 防止被脚本滥用占用 PHP-FPM worker（DoS）或高频探测内网
+        if ($this->tooManyAttempts($request, (string) $action)) {
+            return response()->json(['state' => 'ERROR_TOO_MANY_REQUESTS'], 429);
+        }
+
         // 根据 action 分发处理
         switch ($action) {
             // 返回编辑器配置
@@ -113,9 +119,9 @@ class UeditorController extends Controller
         // 获取配置
         $config = \Chisanhe\Ueditorplus\UeditorPlus::getConfig();
         
-        // 获取分页参数
-        $start = $request->get('start', 0);
-        $size = $request->get('size', $config['imageManagerListSize']);
+        // 获取分页参数（限制范围，防止异常大值造成资源浪费）
+        $start = $this->pageStart($request);
+        $size = $this->pageSize($request, $config['imageManagerListSize']);
         
         // 获取文件列表
         return response()->json(
@@ -141,9 +147,9 @@ class UeditorController extends Controller
         // 获取配置
         $config = \Chisanhe\Ueditorplus\UeditorPlus::getConfig();
         
-        // 获取分页参数
-        $start = $request->get('start', 0);
-        $size = $request->get('size', $config['fileManagerListSize']);
+        // 获取分页参数（限制范围，防止异常大值造成资源浪费）
+        $start = $this->pageStart($request);
+        $size = $this->pageSize($request, $config['fileManagerListSize']);
         
         // 获取文件列表
         return response()->json(
@@ -175,10 +181,16 @@ class UeditorController extends Controller
             }
 
             // 允许请求通过 disk 参数覆盖（前端 serverparam 会带上当前磁盘），
-            // 仅接受真实存在的磁盘，避免被随意切换
-            if ($request) {
+            // 需满足：配置 allowDiskOverride 开启、磁盘名格式合法且真实存在，
+            // 防止被随意切换到非预期磁盘（如指向项目根目录的 local 磁盘）
+            if ($request
+                && (bool) \Chisanhe\Ueditorplus\UeditorPlus::getUploadConfig('allowDiskOverride', true)
+            ) {
                 $requested = $request->get('disk');
-                if (is_string($requested) && $requested !== '' && config('filesystems.disks.' . $requested)) {
+                if (is_string($requested)
+                    && $requested !== ''
+                    && preg_match('/^[A-Za-z0-9_\-]{1,64}$/', $requested)
+                    && config('filesystems.disks.' . $requested)) {
                     $disk = $requested;
                 }
             }
@@ -192,5 +204,87 @@ class UeditorController extends Controller
         }
         
         return $this->storage;
+    }
+
+    /**
+     * 接口频率限制检查
+     *
+     * 按每分钟窗口对上传（upload*）与远程抓图（catchimage）计数，
+     * 维度为 action + IP + 后台用户 ID，超出返回 true。
+     * 通过 catcherRateLimit / uploadRateLimit 配置调整，
+     * 设为 0 可关闭限流
+     *
+     * @param Request $request Laravel 请求对象
+     * @param string $action 当前 action
+     * @return bool 是否超出频率限制
+     */
+    protected function tooManyAttempts(Request $request, $action)
+    {
+        $isUpload = strpos($action, 'upload') === 0;
+        $isCatch = $action === 'catchimage';
+
+        if (!$isUpload && !$isCatch) {
+            return false;
+        }
+
+        $max = (int) \Chisanhe\Ueditorplus\UeditorPlus::getUploadConfig(
+            $isCatch ? 'catcherRateLimit' : 'uploadRateLimit',
+            $isCatch ? 30 : 120
+        );
+
+        if ($max <= 0) {
+            return false;
+        }
+
+        $identifier = '';
+        try {
+            $user = $request->user();
+            $identifier = $user ? (string) $user->getAuthIdentifier() : '';
+        } catch (\Exception $e) {
+            $identifier = '';
+        }
+
+        $key = 'ueditorplus_rl_' . md5($action . '|' . $request->ip() . '|' . $identifier);
+
+        $hits = (int) \Illuminate\Support\Facades\Cache::get($key, 0);
+
+        if ($hits >= $max) {
+            return true;
+        }
+
+        // 使用 DateTime 过期时间，兼容各 Laravel 版本的 put() 语义差异
+        \Illuminate\Support\Facades\Cache::put($key, $hits + 1, now()->addSeconds(60));
+
+        return false;
+    }
+
+    /**
+     * 获取分页起始位置（限制范围）
+     *
+     * @param Request $request Laravel 请求对象
+     * @return int
+     */
+    protected function pageStart(Request $request)
+    {
+        $start = (int) $request->get('start', 0);
+
+        return max(0, min($start, 1000000));
+    }
+
+    /**
+     * 获取分页每页数量（限制范围）
+     *
+     * @param Request $request Laravel 请求对象
+     * @param mixed $default 默认每页数量
+     * @return int
+     */
+    protected function pageSize(Request $request, $default)
+    {
+        $size = (int) $request->get('size', $default);
+        if ($size <= 0) {
+            $size = (int) $default;
+        }
+
+        return max(1, min($size, 200));
     }
 }

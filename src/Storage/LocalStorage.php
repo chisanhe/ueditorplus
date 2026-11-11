@@ -27,6 +27,23 @@ use Symfony\Component\HttpFoundation\File\UploadedFile;
 class LocalStorage implements StorageInterface
 {
     /**
+     * 绝对禁止上传的扩展名（黑名单兜底）
+     *
+     * 白名单之外的第二道防线：即使宿主项目误将 php 等加入白名单，
+     * 或利用多后缀（shell.php.jpg）绕过，也会在这里被拦截
+     *
+     * @var array
+     */
+    const FORBIDDEN_EXTENSIONS = array(
+        'php', 'php3', 'php4', 'php5', 'php7', 'phtml', 'pht', 'phar',
+        'jsp', 'jspx', 'jspa', 'jsw', 'jsv', 'jhtml',
+        'asp', 'aspx', 'asa', 'asax', 'ascx', 'ashx', 'asmx', 'cer', 'cdx',
+        'exe', 'dll', 'com', 'bat', 'cmd', 'scr', 'msi', 'vbs', 'vbe', 'wsf', 'wsh', 'ps1',
+        'sh', 'bash', 'cgi', 'pl', 'py', 'rb', 'so', 'bin', 'jar', 'war',
+        'htaccess', 'htpasswd', 'ini', 'reg',
+    );
+
+    /**
      * Laravel Filesystem 实例
      * 
      * @var Filesystem
@@ -236,6 +253,13 @@ class LocalStorage implements StorageInterface
             return $this->errorResult('ERROR_HTTP_LINK', $url);
         }
 
+        // SSRF 防护：拒绝内网/保留地址（127.0.0.1、169.254.169.254、10.x、192.168.x 等），
+        // 可通过 catcherDenyPrivateIp 配置关闭（不建议）
+        if ((bool) UeditorPlus::getUploadConfig('catcherDenyPrivateIp', true)
+            && !$this->isPublicHost($pathRes['host'])) {
+            return $this->errorResult('ERROR_HOST_FORBIDDEN', $url);
+        }
+
         // 解析原始文件名
         $path = isset($pathRes['path']) ? $pathRes['path'] : '';
         $original = basename($path) !== '' ? basename($path) : md5($url);
@@ -380,6 +404,71 @@ class LocalStorage implements StorageInterface
     }
 
     /**
+     * 判断主机是否为可访问的公网地址（SSRF 防护）
+     *
+     * - IP 字面量：直接校验是否落在私网/保留网段
+     * - 域名：先做本地域名（localhost 等）拦截，再解析出全部 IPv4 后逐一校验
+     * - 解析失败时按拒绝处理（fail closed）
+     *
+     * @param string $host URL 中的主机名
+     * @return bool 是否为公网地址
+     */
+    protected function isPublicHost($host)
+    {
+        $host = strtolower(trim((string) $host));
+        if ($host === '') {
+            return false;
+        }
+
+        // IPv6 字面量（如 [::1]）
+        $ip = trim($host, '[]');
+        if (filter_var($ip, FILTER_VALIDATE_IP)) {
+            return !$this->isPrivateIp($ip);
+        }
+
+        // 本地域名
+        if ($host === 'localhost'
+            || substr($host, -6) === '.local'
+            || substr($host, -10) === '.localhost') {
+            return false;
+        }
+
+        // 解析域名（gethostbynamel 仅返回 IPv4）
+        $ips = @gethostbynamel($host);
+        if (empty($ips)) {
+            $resolved = @gethostbyname($host);
+            if (!is_string($resolved) || $resolved === $host) {
+                // 解析失败，按拒绝处理，避免被用于内网探测
+                return false;
+            }
+            $ips = array($resolved);
+        }
+
+        foreach ($ips as $ip) {
+            if ($this->isPrivateIp($ip)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * 判断 IP 是否为私网/保留地址
+     *
+     * 使用 filter_var 的 NO_PRIV_RANGE / NO_RES_RANGE 标志，
+     * 覆盖 10/8、172.16/12、192.168/16、127/8、0/8、169.254/16、
+     * 224/4、240/4 及 ::1、fc00::/7、fe80::/10 等
+     *
+     * @param string $ip IP 地址
+     * @return bool 是否为私网/保留地址
+     */
+    protected function isPrivateIp($ip)
+    {
+        return filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false;
+    }
+
+    /**
      * 请求远程地址并返回内容
      *
      * 优先使用 curl 扩展（可携带 UA / Referer，兼容性最好），
@@ -415,11 +504,16 @@ class LocalStorage implements StorageInterface
 
         $ch = curl_init($url);
 
+        // 仅允许 HTTP(S) 协议（含重定向目标），防止重定向到 file:// / ftp:// 等
+        $allowedProtocols = defined('CURLPROTO_HTTP') ? CURLPROTO_HTTP | (defined('CURLPROTO_HTTPS') ? CURLPROTO_HTTPS : 0) : 0;
+
         curl_setopt_array($ch, array(
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_HEADER => false,
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_MAXREDIRS => 5,
+            CURLOPT_PROTOCOLS => $allowedProtocols,
+            CURLOPT_REDIR_PROTOCOLS => $allowedProtocols,
             CURLOPT_CONNECTTIMEOUT => min(10, $timeout),
             CURLOPT_TIMEOUT => $timeout,
             CURLOPT_USERAGENT => Arr::get($options, 'user_agent', ''),
@@ -833,8 +927,55 @@ class LocalStorage implements StorageInterface
     protected function normalizePath($path)
     {
         $path = str_replace('\\', '/', (string) $path);
+        $path = trim(preg_replace('#/+#', '/', $path), '/');
 
-        return trim(preg_replace('#/+#', '/', $path), '/');
+        // 逐段解析，消除 .. 与 . 段，防止路径穿越写出磁盘根目录
+        // （如 "ueditorplus/../../shell.php" 会被规整为 "shell.php"，再拼回上传目录）
+        $parts = array();
+        foreach (explode('/', $path) as $segment) {
+            if ($segment === '' || $segment === '.') {
+                continue;
+            }
+            if ($segment === '..') {
+                array_pop($parts);
+                continue;
+            }
+            $parts[] = $segment;
+        }
+
+        return implode('/', $parts);
+    }
+
+    /**
+     * 消毒原始文件名
+     *
+     * hashFilename 关闭时会使用客户端原始文件名存储，
+     * 该值完全由请求方控制，可能包含 ../、反斜杠、控制字符、
+     * 双后缀（shell.php.jpg）等，这里做白名单化处理
+     *
+     * @param string $name 客户端原始文件名
+     * @return string 安全的文件名
+     */
+    protected function sanitizeFilename($name)
+    {
+        $name = str_replace('\\', '/', (string) $name);
+        $name = basename($name);
+
+        // 去掉控制字符与不可见字符
+        $name = preg_replace('/[\x00-\x1F\x7F]/', '', $name);
+
+        // 仅保留字母、数字、点、横线、下划线，其余替换为下划线
+        $name = preg_replace('/[^A-Za-z0-9._\-]/', '_', $name);
+
+        // 折叠连续的点（防 .. 变体），去掉首尾的点
+        $name = preg_replace('/\.{2,}/', '.', $name);
+        $name = trim($name, '.');
+
+        if ($name === '' || $name === '_') {
+            $name = 'file';
+        }
+
+        return $name;
     }
 
     /**
@@ -869,6 +1010,16 @@ class LocalStorage implements StorageInterface
             }
         }
 
+        // 黑名单兜底：即使白名单配置失误，也拒绝可执行/脚本类文件；
+        // 检查原始文件名的所有后缀（防 shell.php.jpg 这类多后缀绕过）
+        $parts = explode('.', strtolower($file->getClientOriginalName()));
+        array_shift($parts);
+        foreach ($parts as $segment) {
+            if (in_array($segment, self::FORBIDDEN_EXTENSIONS, true)) {
+                return 'ERROR_TYPE_NOT_ALLOWED';
+            }
+        }
+
         return false;
     }
 
@@ -884,7 +1035,7 @@ class LocalStorage implements StorageInterface
     protected function getFilename(UploadedFile $file, array $config)
     {
         // 获取文件扩展名
-        $ext = '.' . $file->getClientOriginalExtension();
+        $ext = '.' . strtolower($file->getClientOriginalExtension());
         
         // 检查是否启用哈希文件名
         $hashFilename = UeditorPlus::getUploadConfig('hashFilename', true);
@@ -893,8 +1044,8 @@ class LocalStorage implements StorageInterface
             // 使用 MD5 哈希作为文件名
             $originalName = md5($file->getFilename() . time()) . $ext;
         } else {
-            // 使用原始文件名
-            $originalName = $file->getClientOriginalName();
+            // 使用原始文件名（必须消毒，防止路径穿越与特殊字符）
+            $originalName = $this->sanitizeFilename($file->getClientOriginalName());
         }
         
         // 格式化存储路径

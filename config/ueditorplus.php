@@ -317,6 +317,51 @@ return [
      */
     'catcherVerifySsl' => true,
 
+    // ==================== 安全配置 ====================
+
+    /**
+     * SSRF 防护：拒绝抓取私网/保留地址
+     *
+     * 开启后，catchimage 接口会拒绝指向 127.0.0.1、10.x、192.168.x、
+     * 169.254.169.254 等内网/保留地址（含解析到内网的域名）的请求，
+     * 防止被用于探测内网服务。仅当编辑器确实需要抓取内网图片时才关闭
+     *
+     * @var bool
+     */
+    'catcherDenyPrivateIp' => true,
+
+    /**
+     * 是否允许请求通过 disk 参数切换存储磁盘
+     *
+     * UEditor 前端会通过 serverparam 携带磁盘名，用于支持多磁盘上传。
+     * 关闭后所有上传固定使用配置的 disk / Dcat Admin 默认磁盘，
+     * 生产环境如无多磁盘需求，建议关闭以缩小攻击面
+     *
+     * @var bool
+     */
+    'allowDiskOverride' => true,
+
+    /**
+     * 远程抓图接口频率限制（次/分钟，按 action + IP + 用户计数）
+     *
+     * catchimage 串行下载最多 50 张图片，单张最长 30 秒，
+     * 限流可防止被滥用长时间占用 PHP-FPM worker。
+     * 0 表示不限制
+     *
+     * @var int
+     */
+    'catcherRateLimit' => 30,
+
+    /**
+     * 上传接口频率限制（次/分钟，按 action + IP + 用户计数）
+     *
+     * 覆盖 uploadimage / uploadvideo / uploadfile / uploadscrawl 等 action。
+     * 0 表示不限制
+     *
+     * @var int
+     */
+    'uploadRateLimit' => 120,
+
     // ==================== 图片管理器配置 ====================
 
     /**
