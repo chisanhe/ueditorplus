@@ -572,6 +572,22 @@ class UeditorPlusField extends Field
     function hideProgress() {
         if (typeof Dcat !== 'undefined' && Dcat.NP && Dcat.NP.done) { Dcat.NP.done(); }
     }
+    function getXsrfToken() {
+        // XSRF-TOKEN cookie 由 Laravel 每次响应刷新，始终与当前会话匹配；
+        // 其值是加密后的 token，必须原样放进 X-XSRF-TOKEN 请求头（服务端解密比对），
+        // 不可当明文 token 使用。页面内嵌的 meta/隐藏域 token 在 pjax 缓存页面或
+        // 会话 token 轮换后会过期，导致 catchimage 请求报 "CSRF token mismatch"
+        try {
+            var cookies = document.cookie ? document.cookie.split(';') : [];
+            for (var ci = 0; ci < cookies.length; ci++) {
+                var cookie = cookies[ci].replace(/^\s+/, '');
+                if (cookie.indexOf('XSRF-TOKEN=') === 0) {
+                    return decodeURIComponent(cookie.substring('XSRF-TOKEN='.length)) || '';
+                }
+            }
+        } catch (e0) {}
+        return '';
+    }
     function getCsrfToken() {
         var token = '';
         try {
@@ -641,12 +657,15 @@ class UeditorPlusField extends Field
         showToast('\u68c0\u6d4b\u5230 ' + total + ' \u5f20\u5916\u90e8\u56fe\u7247\u6b63\u5728\u62d3\u53d6\u672c\u5730\u5316...', 'info');
         showProgress();
         var csrfToken = getCsrfToken();
+        var xsrfToken = getXsrfToken();
         var disk = {$diskJS};
         var xhr = new XMLHttpRequest();
         var separator = serverUrl.indexOf('?') === -1 ? '?' : '&';
         xhr.open('POST', serverUrl + separator + 'action=catchimage&disk=' + encodeURIComponent(disk), true);
         xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
-        if (csrfToken) { xhr.setRequestHeader('X-CSRF-TOKEN', csrfToken); }
+        // 优先用 XSRF-TOKEN cookie（始终与当前会话匹配），避免页面内嵌 token 过期导致 419
+        if (xsrfToken) { xhr.setRequestHeader('X-XSRF-TOKEN', xsrfToken); }
+        else if (csrfToken) { xhr.setRequestHeader('X-CSRF-TOKEN', csrfToken); }
         var fd = new FormData();
         // 同时放入表单字段，兼容只读取 _token 输入的场景（如自定义上传接口）
         if (csrfToken) { fd.append('_token', csrfToken); }
