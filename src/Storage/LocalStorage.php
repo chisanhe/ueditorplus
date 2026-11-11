@@ -108,7 +108,9 @@ class LocalStorage implements StorageInterface
             'url' => $this->getUrl($filename, Arr::get($config, 'url_prefix', '')),
             'title' => $filename,
             'original' => $file->getClientOriginalName(),
-            'type' => $file->getExtension(),
+            // getExtension() 返回的是临时文件的扩展名（如 tmp），
+            // 这里必须用原始文件名的扩展名
+            'type' => $file->getClientOriginalExtension(),
             'size' => $file->getSize(),
         ];
 

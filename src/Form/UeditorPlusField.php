@@ -727,6 +727,14 @@ class UeditorPlusField extends Field
         }
         ue.execCommand('serverparam', '_token', '{$csrfToken}');
         ue.execCommand('serverparam', 'disk', '{$disk}');
+        // UEditorPlus 2.0 的 simpleupload / axios 上传通道读取的是
+        // editor.options.serverparam（getOpt），而不是 serverparam 命令的闭包值，
+        // execCommand 设置的 disk 对该通道无效。这里同步写入 options，
+        // 保证 _token 与 disk 在两条上传通道（对话框 WebUploader / simpleupload axios）都生效
+        ue.options.serverparam = {
+            _token: '{$csrfToken}',
+            disk: '{$disk}'
+        };
         ue.addListener('contentchange', function() {
             jQuery('#{$id}-value').val(ue.getContent());
             if (!remoteImageEnable) return;
