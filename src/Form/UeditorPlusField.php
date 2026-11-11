@@ -550,6 +550,26 @@ class UeditorPlusField extends Field
     var fetchTimer_{$id} = null;
     // 本次页面已尝试抓取过的图片地址：避免同一张图被反复抓取、反复弹提示
     var triedUrls = {};
+    // 抓取进行中的并发计数与表单锁定：抓图完成前禁止保存，
+    // 否则用户中途点保存会把外链存进库，导致下次编辑重复抓取
+    var fetchActiveCount_{$id} = 0;
+    var fetchLockTimer_{$id} = null;
+    function setFormLock(lock) {
+        if (lock) { fetchActiveCount_{$id}++; }
+        else if (fetchActiveCount_{$id} > 0) { fetchActiveCount_{$id}--; }
+        var locked = fetchActiveCount_{$id} > 0;
+        try {
+            jQuery('#{$id}-value').closest('form').find('[type=submit]').prop('disabled', locked);
+        } catch (e) {}
+        clearTimeout(fetchLockTimer_{$id});
+        // 安全兜底：请求异常挂起超过 3 分钟时强制解锁保存按钮
+        if (locked) {
+            fetchLockTimer_{$id} = setTimeout(function () {
+                fetchActiveCount_{$id} = 0;
+                try { jQuery('#{$id}-value').closest('form').find('[type=submit]').prop('disabled', false); } catch (e2) {}
+            }, 180000);
+        }
+    }
     function showToast(message, type) {
         type = type || 'success';
         if (typeof Dcat !== 'undefined' && Dcat.notify) {
@@ -693,6 +713,8 @@ class UeditorPlusField extends Field
         // 请求前先把外链图原地替换为编辑器内 loading 占位
         for (var p = 0; p < remoteSrcs.length; p++) { markLoading(remoteSrcs[p].el); }
         editorTip('检测到 ' + total + ' 张外部图片正在抓取本地化...', 'info');
+        // 抓取期间锁定保存，完成后解锁（onload/onerror 中解锁）
+        setFormLock(true);
         var csrfToken = getCsrfToken();
         var xsrfToken = getXsrfToken();
         var disk = {$diskJS};
@@ -712,6 +734,8 @@ class UeditorPlusField extends Field
             triedUrls[remoteSrcs[j].src] = true;
         }
         xhr.onload = function () {
+            // 响应已返回，图片状态随后同步更新，解除保存锁定
+            setFormLock(false);
             if (xhr.status === 200) {
                 try {
                     var res = JSON.parse(xhr.responseText);
@@ -746,6 +770,7 @@ class UeditorPlusField extends Field
             else { editorTip('远程图片抓取失败，请检查服务器网络配置', 'error'); }
         };
         xhr.onerror = function () {
+            setFormLock(false);
             markAllFailed();
             try { jQuery('#{$id}-value').val(editor.getContent()); } catch (e4) {}
             editorTip('远程图片抓取请求失败', 'error');
